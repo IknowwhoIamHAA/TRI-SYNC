@@ -14,4 +14,13 @@ TRI-SYNC is a deterministic runtime protocol designed to guarantee reproducible 
 
 ## 3. Message Schema
 Each event ingested by TRI-SYNC follows this canonical structure:
+{
+"time": <f64>,
+"position": <f64>,
+"velocity": <f64>,
+"curvature": <f64>,
+"acceleration": <f64>,
+"stability": <f64>,
+"metadata": { ... }
+}
 
