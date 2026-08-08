@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::event::Event;
 use crate::event_log::AppendOnlyEventLog;
-use crate::hex::encode_hex;
 use crate::replay::ReplayEngine;
 use crate::state_map::BinaryStateMap;
 
@@ -34,9 +33,12 @@ pub enum Op {
     Set { key: String, value: String },
     /// Remove a key.
     Delete { key: String },
-    /// Add `operand` to the current numeric value of `key` (default 0.0).
+    /// Add `operand` to the current numeric value of `key`.
+    /// If `key` is absent the current value defaults to `0.0`.
     Add { key: String, operand: f64 },
-    /// Multiply the current numeric value of `key` by `operand` (default 0.0).
+    /// Multiply the current numeric value of `key` by `operand`.
+    /// If `key` is absent the current value defaults to `0.0`,
+    /// so the result will always be `0.0` for a missing key.
     Multiply { key: String, operand: f64 },
 }
 
@@ -96,7 +98,7 @@ impl WorkflowRunner {
                     sequence,
                     tenant,
                     key,
-                    encode_hex(&result.to_bits().to_be_bytes()).as_bytes(),
+                    &result.to_bits().to_be_bytes(),
                 ))
             }
             Op::Multiply { key, operand } => {
@@ -106,7 +108,7 @@ impl WorkflowRunner {
                     sequence,
                     tenant,
                     key,
-                    encode_hex(&result.to_bits().to_be_bytes()).as_bytes(),
+                    &result.to_bits().to_be_bytes(),
                 ))
             }
         }

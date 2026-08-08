@@ -53,15 +53,6 @@ impl ReplayEngine {
             }
             event.validate_digest()?;
 
-            // Tenant boundary marker.
-            if prev_tenant.map_or(false, |t| t != event.tenant) {
-                println!(
-                    "── tenant boundary: {} → {} ──",
-                    prev_tenant.unwrap_or(""),
-                    event.tenant
-                );
-            }
-
             // Snapshot state before the event.
             let before: std::collections::BTreeMap<_, _> = state
                 .entries()
@@ -95,6 +86,14 @@ impl ReplayEngine {
                 "[seq={} tenant={} key={} kind={:?}]",
                 event.sequence, event.tenant, event.key, event.kind
             );
+            // Tenant boundary marker printed after the header so it groups with the new event.
+            if prev_tenant.map_or(false, |t| t != event.tenant) {
+                println!(
+                    "  ── tenant boundary: {} → {} ──",
+                    prev_tenant.unwrap_or(""),
+                    event.tenant
+                );
+            }
             println!("  digest: {}", event.payload_sha256);
 
             // Print state diff.
