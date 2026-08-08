@@ -20,7 +20,7 @@ cargo run -- example --log /tmp/tri-sync-example.log
 ```
 
 ## Basic workflow example
-See `/home/runner/work/TRI-SYNC/TRI-SYNC/examples/basic_workflow.sh`.
+See `examples/basic_workflow.sh`.
 
 ## Protocol
-See `/home/runner/work/TRI-SYNC/TRI-SYNC/docs/protocol.md` for the initial TRI‑SYNC protocol format and replay guarantees.
+See `docs/protocol.md` for the initial TRI‑SYNC protocol format and replay guarantees.
