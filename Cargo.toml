@@ -1,0 +1,10 @@
+[package]
+name = "tri-sync"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.16", features = ["derive"] }
+serde = { version = "1.0.209", features = ["derive"] }
+serde_json = "1.0.127"
+sha2 = "0.10.8"
