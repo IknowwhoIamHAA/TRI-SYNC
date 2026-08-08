@@ -1,0 +1,30 @@
+{
+  "id": "ai-audit",
+  "description": "Placeholder AI step with deterministic input/output recorded as events. The AI model's prompt and response are treated as opaque byte values so they can be replayed and audited without re-running inference.",
+  "steps": [
+    {
+      "id": "record-prompt",
+      "tenant": "ai-audit",
+      "ops": [
+        { "op": "set", "key": "model",  "value": "placeholder-v1" },
+        { "op": "set", "key": "prompt", "value": "Summarise the state transition log for compliance review." }
+      ]
+    },
+    {
+      "id": "record-response",
+      "tenant": "ai-audit",
+      "ops": [
+        { "op": "set", "key": "response",  "value": "The log contains 3 set events and 1 delete event across 2 tenants. All digests verified. No anomalies detected." },
+        { "op": "set", "key": "status",    "value": "verified" }
+      ]
+    },
+    {
+      "id": "record-audit-metadata",
+      "tenant": "ai-audit",
+      "ops": [
+        { "op": "set", "key": "auditor",        "value": "tri-sync-audit-v1" },
+        { "op": "set", "key": "audit-pass",     "value": "true" }
+      ]
+    }
+  ]
+}

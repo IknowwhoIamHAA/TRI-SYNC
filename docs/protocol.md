@@ -1,4 +1,3 @@
-```markdown
 # TRI-SYNC Protocol Specification
 
 **Version:** 1.0.0

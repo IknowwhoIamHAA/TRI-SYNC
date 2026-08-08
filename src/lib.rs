@@ -6,3 +6,4 @@ pub mod hex;
 pub mod key;
 pub mod replay;
 pub mod state_map;
+pub mod workflow;

@@ -1,0 +1,45 @@
+{
+  "id": "multi-tenant",
+  "description": "Two tenants with fully isolated key spaces. tenant-a and tenant-b each manage their own state without interference.",
+  "steps": [
+    {
+      "id": "tenant-a-init",
+      "tenant": "tenant-a",
+      "ops": [
+        { "op": "set", "key": "job",     "value": "queued" },
+        { "op": "set", "key": "version", "value": "1" }
+      ]
+    },
+    {
+      "id": "tenant-b-init",
+      "tenant": "tenant-b",
+      "ops": [
+        { "op": "set", "key": "job",     "value": "queued" },
+        { "op": "set", "key": "version", "value": "1" }
+      ]
+    },
+    {
+      "id": "tenant-a-progress",
+      "tenant": "tenant-a",
+      "ops": [
+        { "op": "set", "key": "job", "value": "running" }
+      ]
+    },
+    {
+      "id": "tenant-b-complete",
+      "tenant": "tenant-b",
+      "ops": [
+        { "op": "set",    "key": "job",     "value": "done" },
+        { "op": "delete", "key": "version" }
+      ]
+    },
+    {
+      "id": "tenant-a-complete",
+      "tenant": "tenant-a",
+      "ops": [
+        { "op": "set",    "key": "job",     "value": "done" },
+        { "op": "delete", "key": "version" }
+      ]
+    }
+  ]
+}

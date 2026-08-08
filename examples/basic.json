@@ -1,11 +1,30 @@
 {
-  "time": 0.0,
-  "position": 1.0,
-  "velocity": 0.5,
-  "curvature": 0.0,
-  "acceleration": 0.1,
-  "stability": 1.0,
-  "metadata": {
-    "source": "example"
-  }
+  "id": "basic",
+  "description": "Single-tenant workflow: set a few state keys and delete one.",
+  "steps": [
+    {
+      "id": "init",
+      "tenant": "tenant-a",
+      "ops": [
+        { "op": "set", "key": "status", "value": "queued" },
+        { "op": "set", "key": "retries", "value": "0" }
+      ]
+    },
+    {
+      "id": "start",
+      "tenant": "tenant-a",
+      "ops": [
+        { "op": "set",    "key": "status",  "value": "running" },
+        { "op": "add",    "key": "retries", "operand": 1.0 }
+      ]
+    },
+    {
+      "id": "finish",
+      "tenant": "tenant-a",
+      "ops": [
+        { "op": "set",    "key": "status",  "value": "done" },
+        { "op": "delete", "key": "retries" }
+      ]
+    }
+  ]
 }

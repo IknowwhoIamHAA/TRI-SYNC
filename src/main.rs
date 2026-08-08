@@ -7,6 +7,7 @@ use tri_sync::digest::sha256_hex;
 use tri_sync::event::Event;
 use tri_sync::event_log::AppendOnlyEventLog;
 use tri_sync::replay::ReplayEngine;
+use tri_sync::workflow::{Workflow, WorkflowRunner};
 
 #[derive(Parser)]
 #[command(name = "tri-sync")]
@@ -36,9 +37,19 @@ enum Commands {
         #[arg(long)]
         key: String,
     },
+    Run {
+        /// Path to a workflow JSON file.
+        workflow: PathBuf,
+        /// Path to the event log file to append events to.
+        #[arg(long)]
+        log: PathBuf,
+    },
     Replay {
         #[arg(long)]
         log: PathBuf,
+        /// Print per-event diffs, digest chain, and tenant boundaries.
+        #[arg(long)]
+        verbose: bool,
     },
     Digest {
         #[arg(long)]
@@ -73,11 +84,31 @@ fn main() -> Result<(), Box<dyn Error>> {
             log.append(&event)?;
             println!("appended delete event at sequence {}", event.sequence);
         }
-        Commands::Replay { log } => {
+        Commands::Run { workflow, log } => {
+            let contents = std::fs::read_to_string(&workflow)?;
+            let wf: Workflow = serde_json::from_str(&contents)?;
+            let log = AppendOnlyEventLog::open(&log);
+            let state = WorkflowRunner::run(&wf, &log)?;
+            println!(
+                "{}",
+                to_canonical_string(&state.to_nested_hex_json())?
+            );
+        }
+        Commands::Replay { log, verbose } => {
             let log = AppendOnlyEventLog::open(log);
             let events = log.load()?;
-            let state = ReplayEngine::replay(&events).map_err(|err| std::io::Error::other(err))?;
-            println!("{}", to_canonical_string(&state.to_nested_hex_json())?);
+            if verbose {
+                let state = ReplayEngine::replay_verbose(&events)
+                    .map_err(|err| std::io::Error::other(err))?;
+                println!(
+                    "final state: {}",
+                    to_canonical_string(&state.to_nested_hex_json())?
+                );
+            } else {
+                let state =
+                    ReplayEngine::replay(&events).map_err(|err| std::io::Error::other(err))?;
+                println!("{}", to_canonical_string(&state.to_nested_hex_json())?);
+            }
         }
         Commands::Digest { input } => {
             println!("{}", sha256_hex(input.as_bytes()));
@@ -110,3 +141,4 @@ fn run_example(log_path: PathBuf) -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
