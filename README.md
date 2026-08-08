@@ -97,7 +97,7 @@ These invariants form the foundation of the TRI‑SYNC protocol.
 
 ---
 
-## **📁 Repository Structure (recommended)**
+## **📁 Repository Structure**
 
 ```
 /src
