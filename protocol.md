@@ -23,4 +23,3 @@ Each event ingested by TRI-SYNC follows this canonical structure:
 "stability": <f64>,
 "metadata": { ... }
 }
-
