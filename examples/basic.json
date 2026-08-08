@@ -1,0 +1,11 @@
+{
+  "time": 0.0,
+  "position": 1.0,
+  "velocity": 0.5,
+  "curvature": 0.0,
+  "acceleration": 0.1,
+  "stability": 1.0,
+  "metadata": {
+    "source": "example"
+  }
+}
