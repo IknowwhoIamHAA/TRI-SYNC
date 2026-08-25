@@ -19,4 +19,4 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
       - name: Run tests
-        run: cargo test
+        run: cargo test --locked
