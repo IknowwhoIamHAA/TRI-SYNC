@@ -529,18 +529,21 @@ pub fn event_value_to_bsm(type_tag: u8, value: &Value) -> Result<BsmValue, Strin
     }
 }
 
-pub fn write_op(key: impl Into<String>, value: BsmValue, idempotent: bool) -> BatchOp {
+pub fn write_op(
+    key: impl Into<String>,
+    value: BsmValue,
+    idempotent: bool,
+) -> Result<BatchOp, String> {
     let key = key.into();
-    let (value_type, value) =
-        bsm_value_to_event_value(&value).expect("write_op requires canonical BsmValue input");
-    BatchOp {
+    let (value_type, value) = bsm_value_to_event_value(&value)?;
+    Ok(BatchOp {
         op_type: BatchOpType::StateWrite,
         key,
         value_type: Some(value_type),
         value: Some(value),
         prev_value_digest: None,
         idempotent,
-    }
+    })
 }
 
 pub fn delete_op(
