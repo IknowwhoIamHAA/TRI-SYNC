@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::canonical_json::to_canonical_string;
+use crate::canonical_json::{to_canonical_string, validate_decimal};
 use crate::digest::sha256_hex;
 use crate::key::validate_key;
 
@@ -53,6 +53,22 @@ impl BinaryStateMap {
     ) -> Result<(), String> {
         let key = key.into();
         validate_key(namespace, &key)?;
+
+        if let BsmValue::Decimal(ref s) = value {
+            validate_decimal(s)?;
+        }
+
+        if let Some(existing) = self.inner.get(&key) {
+            if existing.type_tag() != value.type_tag() {
+                return Err(format!(
+                    "TYPE_MISMATCH: key {} expected type 0x{:02x}, got 0x{:02x}",
+                    key,
+                    existing.type_tag(),
+                    value.type_tag()
+                ));
+            }
+        }
+
         self.inner.insert(key, value);
         Ok(())
     }
@@ -178,6 +194,24 @@ impl StateSnapshot {
 
         let state = BinaryStateMap::from_binary(&bytes[cursor..])?;
 
+        let ns_prefix = format!("{namespace}:");
+        for (key, _) in state.entries() {
+            if !key.starts_with(&ns_prefix) {
+                return Err(format!(
+                    "NAMESPACE_LEAK: snapshot key '{key}' does not belong to namespace '{namespace}'"
+                ));
+            }
+        }
+
+        let recomputed_bytes = state.to_binary()?;
+        let recomputed_digest = sha256_hex(&recomputed_bytes);
+        let stored_hex = crate::hex::encode_hex(&root_digest);
+        if recomputed_digest != stored_hex {
+            return Err(format!(
+                "DIGEST_MISMATCH: snapshot root_digest {stored_hex} does not match recomputed {recomputed_digest}"
+            ));
+        }
+
         Ok(Self {
             namespace,
             tick,
@@ -242,6 +276,7 @@ fn decode_value_payload(
             let payload = read_exact(bytes, cursor, len)?;
             let decimal = String::from_utf8(payload.to_vec())
                 .map_err(|_| "decimal payload must be UTF-8".to_string())?;
+            validate_decimal(&decimal)?;
             Ok(BsmValue::Decimal(decimal))
         }
         0x04 => {
@@ -358,10 +393,14 @@ mod tests {
             )
             .expect("set should succeed");
 
+        let root_digest_hex = state.root_digest_hex().expect("root digest");
+        let mut root_digest = [0u8; 32];
+        root_digest.copy_from_slice(&crate::hex::decode_hex(&root_digest_hex).expect("hex decode"));
+
         let snapshot = StateSnapshot {
             namespace: "tenant-a".to_string(),
             tick: 7,
-            root_digest: [42u8; 32],
+            root_digest,
             state,
         };
 
@@ -370,5 +409,184 @@ mod tests {
             .expect("snapshot encode should succeed");
         let decoded = StateSnapshot::from_binary(&encoded).expect("snapshot decode should succeed");
         assert_eq!(decoded, snapshot);
+    }
+
+    // ── Decimal validation ────────────────────────────────────────────────────
+
+    #[test]
+    fn rejects_decimal_with_exponent() {
+        let mut state = BinaryStateMap::new();
+        let err = state
+            .set(
+                "tenant-a",
+                "tenant-a:x",
+                BsmValue::Decimal("1e7".to_string()),
+            )
+            .expect_err("exponent notation must be rejected");
+        assert!(
+            err.contains("exponent"),
+            "error should mention exponent: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_negative_zero_decimal() {
+        let mut state = BinaryStateMap::new();
+        let err = state
+            .set(
+                "tenant-a",
+                "tenant-a:x",
+                BsmValue::Decimal("-0".to_string()),
+            )
+            .expect_err("negative zero must be rejected");
+        assert!(
+            err.contains("negative zero"),
+            "error should mention negative zero: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_decimal_with_leading_zeros() {
+        let mut state = BinaryStateMap::new();
+        let err = state
+            .set(
+                "tenant-a",
+                "tenant-a:x",
+                BsmValue::Decimal("007".to_string()),
+            )
+            .expect_err("leading zeros must be rejected");
+        assert!(
+            err.contains("leading zero"),
+            "error should mention leading zeros: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_decimal_with_trailing_zeros() {
+        let mut state = BinaryStateMap::new();
+        let err = state
+            .set(
+                "tenant-a",
+                "tenant-a:x",
+                BsmValue::Decimal("1.50".to_string()),
+            )
+            .expect_err("trailing zeros must be rejected");
+        assert!(
+            err.contains("trailing zero"),
+            "error should mention trailing zeros: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_decimal_with_empty_fractional_part() {
+        let mut state = BinaryStateMap::new();
+        let err = state
+            .set(
+                "tenant-a",
+                "tenant-a:x",
+                BsmValue::Decimal("1.".to_string()),
+            )
+            .expect_err("empty fractional part must be rejected");
+        assert!(
+            err.contains("fractional"),
+            "error should mention fractional: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_valid_canonical_decimals() {
+        let mut state = BinaryStateMap::new();
+        for s in &["0", "1", "-1", "1.5", "-1.5", "0.1", "123.456"] {
+            state
+                .set(
+                    "tenant-a",
+                    format!("tenant-a:{s}"),
+                    BsmValue::Decimal(s.to_string()),
+                )
+                .unwrap_or_else(|e| panic!("valid decimal '{s}' was rejected: {e}"));
+        }
+    }
+
+    // ── Type stability ────────────────────────────────────────────────────────
+
+    #[test]
+    fn rejects_type_change_on_existing_key() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:k", BsmValue::Integer(1))
+            .expect("initial set should succeed");
+
+        let err = state
+            .set("tenant-a", "tenant-a:k", BsmValue::String("x".to_string()))
+            .expect_err("type change must be rejected");
+        assert!(
+            err.contains("TYPE_MISMATCH"),
+            "error should be TYPE_MISMATCH: {err}"
+        );
+    }
+
+    #[test]
+    fn allows_same_type_update_on_existing_key() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:k", BsmValue::Integer(1))
+            .expect("initial set should succeed");
+        state
+            .set("tenant-a", "tenant-a:k", BsmValue::Integer(2))
+            .expect("same-type update should succeed");
+        assert_eq!(state.get("tenant-a:k"), Some(&BsmValue::Integer(2)));
+    }
+
+    // ── Namespace isolation ───────────────────────────────────────────────────
+
+    #[test]
+    fn rejects_snapshot_with_cross_namespace_key() {
+        let mut state = BinaryStateMap::new();
+        // Bypass `set` validation by inserting directly so we can test from_binary
+        state.set_validated("tenant-b:key", BsmValue::Null);
+
+        let root_digest_hex = state.root_digest_hex().expect("root digest");
+        let mut root_digest = [0u8; 32];
+        root_digest.copy_from_slice(&crate::hex::decode_hex(&root_digest_hex).expect("hex decode"));
+
+        let snapshot = StateSnapshot {
+            namespace: "tenant-a".to_string(),
+            tick: 0,
+            root_digest,
+            state,
+        };
+
+        let encoded = snapshot.to_binary().expect("encode should succeed");
+        let err =
+            StateSnapshot::from_binary(&encoded).expect_err("cross-namespace key must be rejected");
+        assert!(
+            err.contains("NAMESPACE_LEAK"),
+            "error should be NAMESPACE_LEAK: {err}"
+        );
+    }
+
+    // ── Digest integrity ──────────────────────────────────────────────────────
+
+    #[test]
+    fn rejects_snapshot_with_incorrect_digest() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:k", BsmValue::String("v".to_string()))
+            .expect("set should succeed");
+
+        let snapshot = StateSnapshot {
+            namespace: "tenant-a".to_string(),
+            tick: 1,
+            root_digest: [0xAB; 32], // deliberate wrong digest
+            state,
+        };
+
+        let encoded = snapshot.to_binary().expect("encode should succeed");
+        let err =
+            StateSnapshot::from_binary(&encoded).expect_err("incorrect digest must be rejected");
+        assert!(
+            err.contains("DIGEST_MISMATCH"),
+            "error should be DIGEST_MISMATCH: {err}"
+        );
     }
 }

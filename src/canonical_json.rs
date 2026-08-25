@@ -1,5 +1,75 @@
 use serde_json::{Map, Number, Value};
 
+/// Validates that a decimal string is in canonical form:
+/// - No exponent notation
+/// - No negative zero ("-0" or "-0.xxx")
+/// - No leading zeros on the integer part (except "0" itself)
+/// - No trailing zeros in the fractional part
+/// - No empty fractional part (e.g. "1.")
+/// - Must consist only of digits, at most one '.', and an optional leading '-'
+pub fn validate_decimal(s: &str) -> Result<(), String> {
+    if s.is_empty() {
+        return Err("decimal must not be empty".to_string());
+    }
+
+    if s.contains('e') || s.contains('E') {
+        return Err("decimal must not use exponent notation".to_string());
+    }
+
+    let (negative, digits_part) = if let Some(rest) = s.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, s)
+    };
+
+    if digits_part.is_empty() {
+        return Err("decimal has no digits after sign".to_string());
+    }
+
+    let dot_count = digits_part.chars().filter(|&c| c == '.').count();
+    if dot_count > 1 {
+        return Err("decimal must contain at most one '.'".to_string());
+    }
+
+    for c in digits_part.chars() {
+        if c != '.' && !c.is_ascii_digit() {
+            return Err(format!("decimal contains invalid character '{c}'"));
+        }
+    }
+
+    if let Some(dot_pos) = digits_part.find('.') {
+        let int_part = &digits_part[..dot_pos];
+        let frac_part = &digits_part[dot_pos + 1..];
+
+        if int_part.is_empty() {
+            return Err("decimal integer part must not be empty".to_string());
+        }
+        if frac_part.is_empty() {
+            return Err("decimal must not have empty fractional part".to_string());
+        }
+        if frac_part.ends_with('0') {
+            return Err("decimal must not have trailing zeros in fractional part".to_string());
+        }
+
+        if has_invalid_leading_zero_str(int_part) {
+            return Err("decimal must not have leading zeros".to_string());
+        }
+    } else {
+        if has_invalid_leading_zero_str(digits_part) {
+            return Err("decimal must not have leading zeros".to_string());
+        }
+        if negative && digits_part == "0" {
+            return Err("decimal must not be negative zero".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+fn has_invalid_leading_zero_str(integer_part: &str) -> bool {
+    integer_part.starts_with('0') && integer_part.len() > 1
+}
+
 pub fn to_canonical_string(value: &Value) -> Result<String, String> {
     let mut out = String::new();
     write_value(value, &mut out)?;
@@ -67,6 +137,12 @@ fn canonicalize_number(number: &Number) -> Result<String, String> {
             return Err("numeric canonicalization failed: leading zeros are forbidden".to_string());
         }
 
+        if frac.is_empty() {
+            return Err(
+                "numeric canonicalization failed: empty fractional part is forbidden".to_string(),
+            );
+        }
+
         while frac.ends_with('0') {
             frac.pop();
         }
@@ -79,7 +155,7 @@ fn canonicalize_number(number: &Number) -> Result<String, String> {
         }
 
         if integer_part == "-0" {
-            return Ok(format!("-0.{frac}"));
+            return Err("numeric canonicalization failed: '-0' is forbidden".to_string());
         }
 
         return Ok(format!("{integer_part}.{frac}"));
@@ -217,6 +293,74 @@ mod tests {
         assert_eq!(
             to_canonical_string(&value).expect("canonical encoding"),
             "1e-7"
+        );
+    }
+
+    // ── validate_decimal ──────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_decimal_accepts_canonical_forms() {
+        use super::validate_decimal;
+        for s in &["0", "1", "-1", "1.5", "-1.5", "0.1", "123.456", "-0.5"] {
+            validate_decimal(s).unwrap_or_else(|e| panic!("valid decimal '{s}' rejected: {e}"));
+        }
+    }
+
+    #[test]
+    fn validate_decimal_rejects_exponent() {
+        use super::validate_decimal;
+        for s in &["1e7", "1E7", "1.5e-3", "1E-7"] {
+            assert!(
+                validate_decimal(s).is_err(),
+                "exponent form '{s}' should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_decimal_rejects_negative_zero() {
+        use super::validate_decimal;
+        assert!(validate_decimal("-0").is_err(), "-0 must be rejected");
+    }
+
+    #[test]
+    fn validate_decimal_rejects_leading_zeros() {
+        use super::validate_decimal;
+        assert!(validate_decimal("007").is_err());
+        assert!(validate_decimal("01.5").is_err());
+    }
+
+    #[test]
+    fn validate_decimal_rejects_trailing_zeros() {
+        use super::validate_decimal;
+        assert!(validate_decimal("1.50").is_err());
+        assert!(validate_decimal("1.10").is_err());
+    }
+
+    #[test]
+    fn validate_decimal_rejects_empty_fractional_part() {
+        use super::validate_decimal;
+        assert!(validate_decimal("1.").is_err());
+    }
+
+    // ── canonicalize_number edge cases ────────────────────────────────────────
+
+    #[test]
+    fn rejects_empty_fractional_part_in_canonical_json() {
+        // serde_json should not produce "1." but guard against it
+        let value: serde_json::Value = serde_json::from_str("1.5").expect("json parse");
+        assert_eq!(to_canonical_string(&value).expect("canonical"), "1.5");
+    }
+
+    #[test]
+    fn rejects_positive_exponent_in_canonical_json() {
+        // serde_json parses "1.5e10" as the integer 15000000000, which has no exponent form.
+        // Confirm canonical output is the plain integer string, not exponent notation.
+        let value: serde_json::Value = serde_json::from_str("1.5e10").expect("json parse");
+        let result = to_canonical_string(&value).expect("canonical should succeed");
+        assert!(
+            !result.contains('e') && !result.contains('E'),
+            "canonical form must not contain exponent: {result}"
         );
     }
 }
