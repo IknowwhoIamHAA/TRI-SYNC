@@ -141,13 +141,13 @@ Apache 2.0 — suitable for commercial and enterprise adoption.
 ---
 
 ## **🌐 Project Status**
-TRI‑SYNC is under active development.  
-The deterministic core, protocol documentation, and CLI scaffolding are being assembled.
+TRI‑SYNC public API is frozen at **v1.0.0** as of the `v1.0.0-runtime-freeze` tag.  
+Breaking changes are not permitted after this point.
 
 ---
 
 ## **🤝 Contributing**
-Contributions will be welcomed once the public v0.1.0 release is ready.
+All future changes must remain backward‑compatible with the v1.0.0 public API.
 
 ---
 

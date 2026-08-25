@@ -1,6 +1,6 @@
 [package]
 name = "tri-sync"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "A local‑first deterministic runtime for reproducible workflows, automation, and AI auditing. Provides canonical JSON encoding, a binary state map, multi‑tenant isolation, and deterministic replay."
 license = "MIT"
