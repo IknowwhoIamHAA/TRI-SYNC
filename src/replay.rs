@@ -29,6 +29,7 @@ impl ReplayEngine {
         }
 
         let has_snapshot = snapshot.is_some();
+        let snapshot_namespace = snapshot.as_ref().map(|snap| snap.namespace.clone());
         let mut state = if let Some(snapshot) = snapshot {
             snapshot.state
         } else {
@@ -53,8 +54,21 @@ impl ReplayEngine {
         };
 
         let mut seen_digests = HashSet::new();
+        let mut expected_namespace =
+            snapshot_namespace.or_else(|| events.first().map(|event| event.namespace.clone()));
 
         for event in events {
+            if let Some(namespace) = &expected_namespace {
+                if &event.namespace != namespace {
+                    return Err(format!(
+                        "NAMESPACE_LEAK: mixed replay namespaces (expected {}, got {})",
+                        namespace, event.namespace
+                    ));
+                }
+            } else {
+                expected_namespace = Some(event.namespace.clone());
+            }
+
             if event.seq != expected_seq {
                 return Err(format!(
                     "SEQ_GAP: expected seq {}, got {}",
@@ -107,19 +121,7 @@ impl ReplayEngine {
                     .state_write_value()?
                     .ok_or_else(|| "STATE_WRITE missing value payload".to_string())?;
 
-                if let Some(current) = state.get(key)
-                    && current.type_tag() != value.type_tag()
-                {
-                    return Err(format!(
-                        "TYPE_MISMATCH: key {} expected type 0x{:02x}, got 0x{:02x}",
-                        key,
-                        current.type_tag(),
-                        value.type_tag()
-                    ));
-                }
-
-                state.set_validated(key.to_string(), value);
-                Ok(())
+                state.set_validated(key.to_string(), value)
             }
             EventType::StateDelete => {
                 let key = event
@@ -153,17 +155,7 @@ impl ReplayEngine {
                                 .as_ref()
                                 .ok_or_else(|| "STATE_WRITE op missing value".to_string())?;
                             let value = event_value_to_bsm(value_type, raw)?;
-                            if let Some(current) = staged.get(&op.key)
-                                && current.type_tag() != value.type_tag()
-                            {
-                                return Err(format!(
-                                    "TYPE_MISMATCH: key {} expected type 0x{:02x}, got 0x{:02x}",
-                                    op.key,
-                                    current.type_tag(),
-                                    value.type_tag()
-                                ));
-                            }
-                            staged.set_validated(op.key.clone(), value);
+                            staged.set_validated(op.key.clone(), value)?;
                         }
                         BatchOpType::StateDelete => {
                             if staged.get(&op.key).is_none() && !op.idempotent {
@@ -260,5 +252,96 @@ mod tests {
 
         let err = ReplayEngine::replay(&[event]).expect_err("replay should fail");
         assert!(err.contains("SEQ_GAP"));
+    }
+
+    #[test]
+    fn rejects_mixed_namespace_replay_log() {
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("state write create");
+        let second = Event::state_write(
+            1,
+            0,
+            "tenant-b",
+            "tenant-b:key",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("state write create");
+        let err = ReplayEngine::replay(&[first, second]).expect_err("replay should fail");
+        assert!(err.contains("NAMESPACE_LEAK"));
+    }
+
+    #[test]
+    fn rejects_type_drift_during_replay() {
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("state write create");
+        let second = Event::state_write(
+            1,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::String("1".to_string()),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("state write create");
+        let err = ReplayEngine::replay(&[first, second]).expect_err("replay should fail");
+        assert!(err.contains("TYPE_MISMATCH"));
+    }
+
+    #[test]
+    fn replay_is_deterministic_for_same_input() {
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:ratio",
+            BsmValue::Decimal("1.23".to_string()),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("state write create");
+        let second = Event::state_write(
+            1,
+            0,
+            "tenant-a",
+            "tenant-a:count",
+            BsmValue::Integer(7),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("state write create");
+
+        let a = ReplayEngine::replay(&[first.clone(), second.clone()]).expect("replay a");
+        let b = ReplayEngine::replay(&[first, second]).expect("replay b");
+
+        assert_eq!(a, b);
+        assert_eq!(
+            a.root_digest_hex().expect("digest"),
+            b.root_digest_hex().expect("digest")
+        );
     }
 }

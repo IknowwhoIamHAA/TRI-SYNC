@@ -1,4 +1,5 @@
 pub mod canonical_json;
+pub mod decimal;
 pub mod digest;
 pub mod event;
 pub mod event_log;

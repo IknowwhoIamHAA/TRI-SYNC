@@ -1,5 +1,7 @@
 use serde_json::{Map, Number, Value};
 
+use crate::decimal::canonicalize_json_number;
+
 pub fn to_canonical_string(value: &Value) -> Result<String, String> {
     let mut out = String::new();
     write_value(value, &mut out)?;
@@ -45,112 +47,7 @@ fn write_object(map: &Map<String, Value>, out: &mut String) -> Result<(), String
 }
 
 fn canonicalize_number(number: &Number) -> Result<String, String> {
-    let rendered = number.to_string();
-
-    if rendered.starts_with('+') {
-        return Err("numeric canonicalization failed: '+' sign is forbidden".to_string());
-    }
-
-    if rendered == "-0" || rendered == "-0.0" {
-        return Err("numeric canonicalization failed: '-0' is forbidden".to_string());
-    }
-
-    if rendered.contains('e') || rendered.contains('E') {
-        return canonicalize_exponent(&rendered);
-    }
-
-    if let Some(dot) = rendered.find('.') {
-        let integer_part = &rendered[..dot];
-        let mut frac = rendered[dot + 1..].to_string();
-
-        if has_invalid_leading_zero(integer_part) {
-            return Err("numeric canonicalization failed: leading zeros are forbidden".to_string());
-        }
-
-        while frac.ends_with('0') {
-            frac.pop();
-        }
-
-        if frac.is_empty() {
-            if integer_part == "-0" {
-                return Err("numeric canonicalization failed: '-0' is forbidden".to_string());
-            }
-            return Ok(integer_part.to_string());
-        }
-
-        if integer_part == "-0" {
-            return Ok(format!("-0.{frac}"));
-        }
-
-        return Ok(format!("{integer_part}.{frac}"));
-    }
-
-    if has_invalid_leading_zero(&rendered) {
-        return Err("numeric canonicalization failed: leading zeros are forbidden".to_string());
-    }
-
-    Ok(rendered)
-}
-
-fn canonicalize_exponent(number: &str) -> Result<String, String> {
-    let normalized = number.replace('E', "e");
-    let (mantissa, exponent) = normalized
-        .split_once('e')
-        .ok_or_else(|| "numeric canonicalization failed: malformed exponent".to_string())?;
-
-    if exponent.starts_with('+') || !exponent.starts_with('-') {
-        return Err("numeric canonicalization failed: positive exponent is forbidden".to_string());
-    }
-
-    let value = normalized
-        .parse::<f64>()
-        .map_err(|_| "numeric canonicalization failed: malformed decimal".to_string())?;
-    if !value.is_finite() {
-        return Err("numeric canonicalization failed: NaN/Infinity are forbidden".to_string());
-    }
-
-    if value.abs() >= 1e-6 {
-        return Err(
-            "numeric canonicalization failed: exponent notation only allowed for abs(value) < 1e-6"
-                .to_string(),
-        );
-    }
-
-    if mantissa.starts_with('+') || mantissa == "-0" {
-        return Err("numeric canonicalization failed: invalid mantissa sign".to_string());
-    }
-
-    let mut chars = mantissa.chars();
-    if matches!(chars.next(), Some('-')) {
-        if !matches!(chars.next(), Some('1'..='9')) {
-            return Err("numeric canonicalization failed: mantissa must be normalized".to_string());
-        }
-    } else if !matches!(mantissa.chars().next(), Some('1'..='9')) {
-        return Err("numeric canonicalization failed: mantissa must be normalized".to_string());
-    }
-
-    let mut clean_mantissa = mantissa.to_string();
-    if clean_mantissa.contains('.') {
-        while clean_mantissa.ends_with('0') {
-            clean_mantissa.pop();
-        }
-        if clean_mantissa.ends_with('.') {
-            clean_mantissa.pop();
-        }
-    }
-
-    if clean_mantissa == "-0" {
-        return Err("numeric canonicalization failed: '-0' is forbidden".to_string());
-    }
-
-    Ok(format!("{clean_mantissa}e{exponent}"))
-}
-
-fn has_invalid_leading_zero(integer_part: &str) -> bool {
-    if integer_part.starts_with("-0") {
-        return integer_part.len() > 2;
-    }
-    integer_part.starts_with('0') && integer_part.len() > 1
+    canonicalize_json_number(number)
 }
 
 fn write_json_string(input: &str, out: &mut String) {
@@ -216,7 +113,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str("1e-7").expect("json parse");
         assert_eq!(
             to_canonical_string(&value).expect("canonical encoding"),
-            "1e-7"
+            "0.0000001"
         );
     }
 }

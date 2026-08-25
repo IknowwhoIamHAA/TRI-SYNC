@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::canonical_json::to_canonical_string;
+use crate::decimal::validate_decimal;
 use crate::digest::sha256_hex;
 use crate::key::{validate_key, validate_namespace};
 use crate::state_map::BsmValue;
@@ -116,7 +117,7 @@ impl Event {
         validate_namespace(&namespace)?;
         validate_key(&namespace, &key)?;
 
-        let (value_type, value_json) = bsm_value_to_event_value(&value);
+        let (value_type, value_json) = bsm_value_to_event_value(&value)?;
 
         let mut event = Self {
             event_type: EventType::StateWrite,
@@ -358,6 +359,7 @@ impl Event {
     }
 
     pub fn digest_input(&self) -> Result<Value, String> {
+        self.validate_payload_invariants()?;
         let mut event = serde_json::to_value(self).map_err(|err| err.to_string())?;
         let object = event
             .as_object_mut()
@@ -426,16 +428,68 @@ impl Event {
 
         Ok(Some(event_value_to_bsm(type_tag, value)?))
     }
+
+    fn validate_payload_invariants(&self) -> Result<(), String> {
+        validate_namespace(&self.namespace)?;
+        match self.event_type {
+            EventType::StateWrite => {
+                let key = self
+                    .key
+                    .as_deref()
+                    .ok_or_else(|| "STATE_WRITE missing key".to_string())?;
+                validate_key(&self.namespace, key)?;
+                let type_tag = self
+                    .value_type
+                    .ok_or_else(|| "STATE_WRITE missing value_type".to_string())?;
+                let value = self
+                    .value
+                    .as_ref()
+                    .ok_or_else(|| "STATE_WRITE missing value".to_string())?;
+                let _ = event_value_to_bsm(type_tag, value)?;
+            }
+            EventType::StateDelete => {
+                let key = self
+                    .key
+                    .as_deref()
+                    .ok_or_else(|| "STATE_DELETE missing key".to_string())?;
+                validate_key(&self.namespace, key)?;
+            }
+            EventType::StateBatch => {
+                let ops = self
+                    .ops
+                    .as_ref()
+                    .ok_or_else(|| "STATE_BATCH missing ops".to_string())?;
+                for op in ops {
+                    validate_key(&self.namespace, &op.key)?;
+                    if op.op_type == BatchOpType::StateWrite {
+                        let type_tag = op
+                            .value_type
+                            .ok_or_else(|| "STATE_WRITE op missing value_type".to_string())?;
+                        let value = op
+                            .value
+                            .as_ref()
+                            .ok_or_else(|| "STATE_WRITE op missing value".to_string())?;
+                        let _ = event_value_to_bsm(type_tag, value)?;
+                    }
+                }
+            }
+            EventType::TickSeal | EventType::Compact | EventType::ProtocolError => {}
+        }
+        Ok(())
+    }
 }
 
-fn bsm_value_to_event_value(value: &BsmValue) -> (u8, Value) {
+fn bsm_value_to_event_value(value: &BsmValue) -> Result<(u8, Value), String> {
     match value {
-        BsmValue::Boolean(v) => (0x01, Value::Bool(*v)),
-        BsmValue::Integer(v) => (0x02, Value::Number((*v).into())),
-        BsmValue::Decimal(v) => (0x03, Value::String(v.clone())),
-        BsmValue::String(v) => (0x04, Value::String(v.clone())),
-        BsmValue::Bytes(v) => (0x05, Value::String(crate::hex::encode_hex(v))),
-        BsmValue::Null => (0x06, Value::Null),
+        BsmValue::Boolean(v) => Ok((0x01, Value::Bool(*v))),
+        BsmValue::Integer(v) => Ok((0x02, Value::Number((*v).into()))),
+        BsmValue::Decimal(v) => {
+            validate_decimal(v)?;
+            Ok((0x03, Value::String(v.clone())))
+        }
+        BsmValue::String(v) => Ok((0x04, Value::String(v.clone()))),
+        BsmValue::Bytes(v) => Ok((0x05, Value::String(crate::hex::encode_hex(v)))),
+        BsmValue::Null => Ok((0x06, Value::Null)),
     }
 }
 
@@ -449,10 +503,13 @@ pub fn event_value_to_bsm(type_tag: u8, value: &Value) -> Result<BsmValue, Strin
             .as_i64()
             .map(BsmValue::Integer)
             .ok_or_else(|| "TYPE_MISMATCH: expected int64".to_string()),
-        0x03 => value
-            .as_str()
-            .map(|v| BsmValue::Decimal(v.to_string()))
-            .ok_or_else(|| "TYPE_MISMATCH: expected decimal string".to_string()),
+        0x03 => {
+            let v = value
+                .as_str()
+                .ok_or_else(|| "TYPE_MISMATCH: expected decimal string".to_string())?;
+            validate_decimal(v)?;
+            Ok(BsmValue::Decimal(v.to_string()))
+        }
         0x04 => value
             .as_str()
             .map(|v| BsmValue::String(v.to_string()))
@@ -474,7 +531,8 @@ pub fn event_value_to_bsm(type_tag: u8, value: &Value) -> Result<BsmValue, Strin
 
 pub fn write_op(key: impl Into<String>, value: BsmValue, idempotent: bool) -> BatchOp {
     let key = key.into();
-    let (value_type, value) = bsm_value_to_event_value(&value);
+    let (value_type, value) =
+        bsm_value_to_event_value(&value).expect("write_op requires canonical BsmValue input");
     BatchOp {
         op_type: BatchOpType::StateWrite,
         key,
@@ -549,6 +607,8 @@ pub fn minimal_state_write_json(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::{Event, EventType, ZERO_DIGEST_HEX};
     use crate::state_map::BsmValue;
 
@@ -594,5 +654,25 @@ mod tests {
 
         event_a.event_type = EventType::StateDelete;
         assert_ne!(event_a.expected_digest().expect("digest"), event_b.digest);
+    }
+
+    #[test]
+    fn rejects_non_canonical_decimal_in_digest_computation() {
+        let mut event = Event::state_write(
+            1,
+            0,
+            "tenant-a",
+            "tenant-a:ratio",
+            BsmValue::Decimal("1.23".to_string()),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("event creation should succeed");
+        event.value = Some(json!("01.230"));
+        let err = event
+            .expected_digest()
+            .expect_err("expected invalid numeric");
+        assert!(err.contains("INVALID_NUMERIC"));
     }
 }

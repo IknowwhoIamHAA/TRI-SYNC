@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::canonical_json::to_canonical_string;
+use crate::decimal::validate_decimal;
 use crate::digest::sha256_hex;
 use crate::key::validate_key;
 
@@ -53,12 +54,11 @@ impl BinaryStateMap {
     ) -> Result<(), String> {
         let key = key.into();
         validate_key(namespace, &key)?;
-        self.inner.insert(key, value);
-        Ok(())
+        self.set_validated(key, value)
     }
 
-    pub fn set_validated(&mut self, key: impl Into<String>, value: BsmValue) {
-        self.inner.insert(key.into(), value);
+    pub fn set_validated(&mut self, key: impl Into<String>, value: BsmValue) -> Result<(), String> {
+        self.insert_checked(key.into(), value)
     }
 
     pub fn delete(&mut self, namespace: &str, key: &str) -> Result<(), String> {
@@ -118,7 +118,9 @@ impl BinaryStateMap {
 
             let type_tag = read_u8(bytes, &mut cursor)?;
             let value = decode_value_payload(type_tag, bytes, &mut cursor)?;
-            map.insert(key, value);
+            if map.insert(key, value).is_some() {
+                return Err("ORDER_VIOLATION: duplicate key detected".to_string());
+            }
         }
 
         if cursor != bytes.len() {
@@ -133,6 +135,7 @@ impl BinaryStateMap {
     }
 
     pub fn to_canonical_json(&self) -> Result<String, String> {
+        self.validate_invariants()?;
         let value = serde_json::to_value(self.to_json_value()).map_err(|err| err.to_string())?;
         to_canonical_string(&value)
     }
@@ -146,9 +149,33 @@ impl BinaryStateMap {
     }
 
     pub fn value_digest_hex(value: &BsmValue) -> Result<String, String> {
+        normalize_value(value.clone())?;
         let mut encoded = vec![value.type_tag()];
         encode_value_payload(value, &mut encoded)?;
         Ok(sha256_hex(&encoded))
+    }
+
+    fn insert_checked(&mut self, key: String, value: BsmValue) -> Result<(), String> {
+        let value = normalize_value(value)?;
+        if let Some(existing) = self.inner.get(&key)
+            && existing.type_tag() != value.type_tag()
+        {
+            return Err(format!(
+                "TYPE_MISMATCH: key {} expected type 0x{:02x}, got 0x{:02x}",
+                key,
+                existing.type_tag(),
+                value.type_tag()
+            ));
+        }
+        self.inner.insert(key, value);
+        Ok(())
+    }
+
+    fn validate_invariants(&self) -> Result<(), String> {
+        for value in self.inner.values() {
+            normalize_value(value.clone())?;
+        }
+        Ok(())
     }
 }
 
@@ -156,6 +183,14 @@ impl StateSnapshot {
     pub fn to_binary(&self) -> Result<Vec<u8>, String> {
         if self.namespace.as_bytes().len() > u16::MAX as usize {
             return Err("namespace too large".to_string());
+        }
+        for key in self.state.inner.keys() {
+            validate_key(&self.namespace, key)?;
+        }
+        let expected_root = self.state.root_digest_hex()?;
+        let expected_root_bytes = crate::hex::decode_hex(&expected_root)?;
+        if expected_root_bytes.as_slice() != self.root_digest {
+            return Err("TICK_SEAL_FAIL: snapshot root digest mismatch".to_string());
         }
 
         let mut out = Vec::new();
@@ -177,6 +212,14 @@ impl StateSnapshot {
         root_digest.copy_from_slice(read_exact(bytes, &mut cursor, 32)?);
 
         let state = BinaryStateMap::from_binary(&bytes[cursor..])?;
+        for key in state.inner.keys() {
+            validate_key(&namespace, key)?;
+        }
+        let computed_root = state.root_digest_hex()?;
+        let computed_root_bytes = crate::hex::decode_hex(&computed_root)?;
+        if computed_root_bytes.as_slice() != root_digest {
+            return Err("TICK_SEAL_FAIL: snapshot root digest mismatch".to_string());
+        }
 
         Ok(Self {
             namespace,
@@ -203,9 +246,7 @@ fn encode_value_payload(value: &BsmValue, out: &mut Vec<u8>) -> Result<(), Strin
         BsmValue::Boolean(v) => out.push(u8::from(*v)),
         BsmValue::Integer(v) => out.extend_from_slice(&v.to_be_bytes()),
         BsmValue::Decimal(v) => {
-            if v.is_empty() {
-                return Err("decimal payload must not be empty".to_string());
-            }
+            validate_decimal(v)?;
             out.extend_from_slice(&(v.len() as u32).to_be_bytes());
             out.extend_from_slice(v.as_bytes());
         }
@@ -242,6 +283,7 @@ fn decode_value_payload(
             let payload = read_exact(bytes, cursor, len)?;
             let decimal = String::from_utf8(payload.to_vec())
                 .map_err(|_| "decimal payload must be UTF-8".to_string())?;
+            validate_decimal(&decimal)?;
             Ok(BsmValue::Decimal(decimal))
         }
         0x04 => {
@@ -257,6 +299,16 @@ fn decode_value_payload(
         }
         0x06 => Ok(BsmValue::Null),
         _ => Err(format!("unknown value type tag: 0x{type_tag:02x}")),
+    }
+}
+
+fn normalize_value(value: BsmValue) -> Result<BsmValue, String> {
+    match value {
+        BsmValue::Decimal(decimal) => {
+            validate_decimal(&decimal)?;
+            Ok(BsmValue::Decimal(decimal))
+        }
+        other => Ok(other),
     }
 }
 
@@ -357,11 +409,15 @@ mod tests {
                 BsmValue::String("v".to_string()),
             )
             .expect("set should succeed");
+        let root_digest = state.root_digest_hex().expect("root digest");
+        let root_digest_bytes = crate::hex::decode_hex(&root_digest).expect("decode root digest");
+        let mut root_digest_array = [0u8; 32];
+        root_digest_array.copy_from_slice(&root_digest_bytes);
 
         let snapshot = StateSnapshot {
             namespace: "tenant-a".to_string(),
             tick: 7,
-            root_digest: [42u8; 32],
+            root_digest: root_digest_array,
             state,
         };
 
@@ -370,5 +426,103 @@ mod tests {
             .expect("snapshot encode should succeed");
         let decoded = StateSnapshot::from_binary(&encoded).expect("snapshot decode should succeed");
         assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
+    fn rejects_non_canonical_decimal_on_set() {
+        let mut state = BinaryStateMap::new();
+        let err = state
+            .set(
+                "tenant-a",
+                "tenant-a:ratio",
+                BsmValue::Decimal("001.2300".to_string()),
+            )
+            .expect_err("non-canonical decimal should fail");
+        assert!(err.contains("INVALID_NUMERIC"));
+    }
+
+    #[test]
+    fn rejects_type_drift_on_update() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:stable", BsmValue::Integer(1))
+            .expect("set should succeed");
+        let err = state
+            .set(
+                "tenant-a",
+                "tenant-a:stable",
+                BsmValue::String("one".to_string()),
+            )
+            .expect_err("type drift should fail");
+        assert!(err.contains("TYPE_MISMATCH"));
+    }
+
+    #[test]
+    fn rejects_snapshot_root_digest_mismatch() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+            .expect("set should succeed");
+        let mut root_digest = [0u8; 32];
+        root_digest[0] = 1;
+        let snapshot = StateSnapshot {
+            namespace: "tenant-a".to_string(),
+            tick: 1,
+            root_digest,
+            state,
+        };
+        let err = snapshot
+            .to_binary()
+            .expect_err("snapshot root mismatch should fail");
+        assert!(err.contains("TICK_SEAL_FAIL"));
+    }
+
+    #[test]
+    fn rejects_mixed_namespace_snapshot() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set_validated(
+                "tenant-b:key",
+                BsmValue::String("invalid namespace placement".to_string()),
+            )
+            .expect("value normalization should still succeed");
+        let root_digest = state.root_digest_hex().expect("root digest");
+        let root_digest_bytes = crate::hex::decode_hex(&root_digest).expect("decode root digest");
+        let mut root_digest_array = [0u8; 32];
+        root_digest_array.copy_from_slice(&root_digest_bytes);
+        let snapshot = StateSnapshot {
+            namespace: "tenant-a".to_string(),
+            tick: 1,
+            root_digest: root_digest_array,
+            state,
+        };
+        let err = snapshot
+            .to_binary()
+            .expect_err("mixed namespace snapshot should fail");
+        assert!(err.contains("NAMESPACE_LEAK"));
+    }
+
+    #[test]
+    fn cross_language_determinism_vector_root_digest_stable() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:counter", BsmValue::Integer(42))
+            .expect("set should succeed");
+        state
+            .set(
+                "tenant-a",
+                "tenant-a:ratio",
+                BsmValue::Decimal("3.14".to_string()),
+            )
+            .expect("set should succeed");
+        state
+            .set("tenant-a", "tenant-a:flag", BsmValue::Boolean(true))
+            .expect("set should succeed");
+
+        let digest = state.root_digest_hex().expect("root digest");
+        assert_eq!(
+            digest,
+            "768e154f65fb12f4419452ac76223006bf9097187294b0d9cec1260e22c664d3"
+        );
     }
 }
