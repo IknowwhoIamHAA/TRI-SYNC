@@ -50,29 +50,41 @@ impl AppendOnlyEventLog {
     }
 
     pub fn append(&self, event: &Event) -> Result<(), Box<dyn Error>> {
-        let mut events = self.load()?;
+        let last_event = self.load_last_event()?;
 
-        let expected_seq = events.last().map_or(0, |last| last.seq + 1);
+        let expected_seq = last_event.as_ref().map_or(0, |last| last.seq + 1);
         if event.seq != expected_seq {
             return Err(
                 format!("SEQ_GAP: expected seq {}, got {}", expected_seq, event.seq).into(),
             );
         }
 
-        let expected_prev = events
-            .last()
+        let expected_prev = last_event
+            .as_ref()
             .map_or(ZERO_DIGEST_HEX.to_string(), |last| last.digest.clone());
         event.validate_prev_digest(&expected_prev)?;
         event.validate_digest()?;
 
-        if let Some(last) = events.last() {
-            if last.namespace != event.namespace {
-                return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
-            }
+        if let Some(last) = &last_event
+            && last.namespace != event.namespace
+        {
+            return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
         }
 
-        events.push(event.clone());
-        self.write_segment(&events)
+        if last_event.is_none() {
+            self.write_header(event)?;
+        }
+
+        let value = serde_json::to_value(event)?;
+        let canonical = to_canonical_string(&value)?;
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        writeln!(file, "{canonical}")?;
+
+        Ok(())
     }
 
     pub fn load(&self) -> Result<Vec<Event>, Box<dyn Error>> {
@@ -112,33 +124,39 @@ impl AppendOnlyEventLog {
     }
 
     pub fn next_sequence(&self) -> Result<u64, Box<dyn Error>> {
-        Ok(self.load()?.last().map_or(0, |event| event.seq + 1))
+        Ok(self.load_last_event()?.map_or(0, |event| event.seq + 1))
     }
 
-    fn write_segment(&self, events: &[Event]) -> Result<(), Box<dyn Error>> {
-        if events.is_empty() {
-            return Ok(());
+    fn load_last_event(&self) -> Result<Option<Event>, Box<dyn Error>> {
+        if !self.path.exists() {
+            return Ok(None);
         }
 
-        let first = &events[0];
+        let file = File::open(&self.path)?;
+        let mut last_event = None;
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            let line = line.trim();
+            if line.is_empty() || line.starts_with(SEGMENT_PREFIX) {
+                continue;
+            }
+            last_event = Some(serde_json::from_str::<Event>(line)?);
+        }
+        Ok(last_event)
+    }
+
+    fn write_header(&self, first_event: &Event) -> Result<(), Box<dyn Error>> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| err.to_string())?;
         let header = SegmentHeader {
-            segment_id: format!(
-                "seg-{}-{}",
-                first.seq,
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|err| err.to_string())?
-                    .as_nanos()
-            ),
-            namespace: first.namespace.clone(),
-            seq_start: first.seq,
-            seq_end: events.last().map_or(first.seq, |event| event.seq),
-            first_digest: first.digest.clone(),
+            segment_id: format!("seg-{}-{}", first_event.seq, now.as_nanos()),
+            namespace: first_event.namespace.clone(),
+            seq_start: first_event.seq,
+            seq_end: first_event.seq,
+            first_digest: first_event.digest.clone(),
             prev_segment: None,
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|err| err.to_string())?
-                .as_millis() as u64,
+            created_at: now.as_millis() as u64,
             protocol_ver: PROTOCOL_VERSION.to_string(),
         };
 
@@ -147,17 +165,9 @@ impl AppendOnlyEventLog {
 
         let mut file = OpenOptions::new()
             .create(true)
-            .write(true)
-            .truncate(true)
+            .append(true)
             .open(&self.path)?;
-
         writeln!(file, "{SEGMENT_PREFIX}{header_canonical}")?;
-
-        for event in events {
-            let value = serde_json::to_value(event)?;
-            let canonical = to_canonical_string(&value)?;
-            writeln!(file, "{canonical}")?;
-        }
 
         Ok(())
     }

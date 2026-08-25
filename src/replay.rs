@@ -21,6 +21,13 @@ impl ReplayEngine {
         events: &[Event],
         snapshot: Option<StateSnapshot>,
     ) -> Result<ReplayOutcome, String> {
+        if snapshot.is_none() && events.first().is_some_and(|event| event.seq != 0) {
+            return Err(format!(
+                "SEQ_GAP: replay without snapshot must start at seq 0, got {}",
+                events.first().map_or(0, |event| event.seq)
+            ));
+        }
+
         let has_snapshot = snapshot.is_some();
         let mut state = if let Some(snapshot) = snapshot {
             snapshot.state
@@ -41,12 +48,6 @@ impl ReplayEngine {
                 .map_or(crate::event::ZERO_DIGEST_HEX.to_string(), |first| {
                     first.prev_digest.clone()
                 })
-        } else if let Some(first) = events.first() {
-            if first.seq == 0 {
-                crate::event::ZERO_DIGEST_HEX.to_string()
-            } else {
-                crate::event::ZERO_DIGEST_HEX.to_string()
-            }
         } else {
             crate::event::ZERO_DIGEST_HEX.to_string()
         };
