@@ -1,5 +1,9 @@
 use serde_json::Number;
 
+/// Maximum number of significant digits accepted in any decimal value.
+/// Values exceeding this limit are rejected to prevent DoS via large-integer arithmetic.
+pub const MAX_DECIMAL_DIGITS: usize = 256;
+
 pub fn validate_decimal(input: &str) -> Result<(), String> {
     let canonical = canonicalize_decimal(input)?;
     if canonical == input {
@@ -61,6 +65,11 @@ pub fn canonicalize_decimal(input: &str) -> Result<String, String> {
     }
     let digits = digits[non_zero_pos.expect("checked above")..].to_string();
 
+    if digits.len() > MAX_DECIMAL_DIGITS {
+        return Err(format!(
+            "INVALID_NUMERIC: decimal exceeds maximum digit count of {MAX_DECIMAL_DIGITS}"
+        ));
+    }
     let scale = frac_part.len() as i64;
     let shifted = exponent
         .checked_sub(scale)
@@ -199,5 +208,14 @@ mod tests {
         assert!(validate_decimal("01.23").is_err());
         assert!(validate_decimal("1.230").is_err());
         assert!(validate_decimal("1e-7").is_err());
+    }
+
+    #[test]
+    fn rejects_decimal_exceeding_digit_limit() {
+        let long_integer = "1".repeat(257);
+        assert!(canonicalize_decimal(&long_integer).is_err());
+
+        let at_limit = "1".repeat(256);
+        assert!(canonicalize_decimal(&at_limit).is_ok());
     }
 }
