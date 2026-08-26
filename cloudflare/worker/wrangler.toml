@@ -1,0 +1,19 @@
+name = "tri-sync-worker"
+main = "src/index.js"
+compatibility_date = "2024-04-10"
+
+# Cloudflare KV namespace for issued license keys.
+# Create with: wrangler kv namespace create ISSUED_KEYS
+# Then replace the placeholder id below with the real namespace id.
+[[kv_namespaces]]
+binding = "ISSUED_KEYS"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# Environment secrets — set with:
+#   wrangler secret put STRIPE_API_KEY
+#   wrangler secret put STRIPE_WEBHOOK_SECRET
+#   wrangler secret put RESEND_API_KEY
+#   wrangler secret put RESEND_AUTOMATION_ID
+#
+# STRIPE_WEBHOOK_SECRET must be the Base64-encoded value of the raw secret
+# (the "whsec_..." string produced by the Stripe dashboard).
