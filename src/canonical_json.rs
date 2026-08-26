@@ -84,7 +84,7 @@ fn write_json_string(input: &str, out: &mut String) {
 fn hex_digit(nibble: u8) -> char {
     match nibble {
         0..=9 => (b'0' + nibble) as char,
-        10..=15 => (b'A' + nibble - 10) as char,
+        10..=15 => (b'a' + nibble - 10) as char,
         _ => unreachable!(),
     }
 }
@@ -189,14 +189,14 @@ mod tests {
 
     #[test]
     fn rfc8785_string_escapes_control_characters() {
-        // U+0000 through U+001F must be escaped as \uXXXX
+        // U+0000 through U+001F must be escaped as \uXXXX with lowercase hex (RFC 8785 §3.2.2)
         let value = serde_json::Value::String("\u{0000}".to_string());
         let canonical = to_canonical_string(&value).expect("control char");
         assert_eq!(canonical, r#""\u0000""#);
 
         let value = serde_json::Value::String("\u{001F}".to_string());
         let canonical = to_canonical_string(&value).expect("control char");
-        assert_eq!(canonical, r#""\u001F""#);
+        assert_eq!(canonical, r#""\u001f""#);
     }
 
     #[test]

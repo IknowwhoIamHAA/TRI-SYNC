@@ -68,7 +68,10 @@ impl AppendOnlyEventLog {
 
         let result = self.append_under_lock(event);
 
-        lock_file.unlock()?;
+        // Drop the lock file handle; the OS releases the exclusive lock on drop.
+        // We intentionally do not call unlock() explicitly so that an error from
+        // append_under_lock is never swallowed by a subsequent unlock error.
+        drop(lock_file);
         result
     }
 
