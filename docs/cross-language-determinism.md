@@ -141,7 +141,7 @@ Binary encoding (hex, with annotations):
 
 # entry 0: "tenant-a:counter" → Integer(42)
 00 10                                # key_len = 16
-74 65 6e 61 6e 74 2d 61 3a 63 6f 6e 74 65 72 ("tenant-a:counter")
+74 65 6e 61 6e 74 2d 61 3a 63 6f 75 6e 74 65 72  ("tenant-a:counter")
 02                                   # type_tag = Integer
 00 00 00 00 00 00 00 2a              # i64 BE = 42
 

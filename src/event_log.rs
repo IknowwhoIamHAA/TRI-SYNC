@@ -209,7 +209,11 @@ impl AppendOnlyEventLog {
     /// file via a temporary sibling.
     fn update_header_seq_end(&self, new_seq_end: u64) -> Result<(), Box<dyn Error>> {
         if !self.path.exists() {
-            return Ok(());
+            return Err(format!(
+                "log file {:?} disappeared after append; seq_end not updated",
+                self.path
+            )
+            .into());
         }
 
         let content = std::fs::read_to_string(&self.path)?;
