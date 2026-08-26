@@ -52,7 +52,9 @@ pub fn check() -> Result<(), String> {
         ));
     }
 
-    if valid_keys.contains(&key) {
+    // Iterate all keys without short-circuiting to reduce timing variance.
+    let found = valid_keys.iter().fold(false, |acc, k| acc | (k == &key));
+    if found {
         Ok(())
     } else {
         Err(format!(
@@ -127,6 +129,12 @@ pub(crate) fn parse_key_file_content(content: &str) -> std::collections::HashSet
 
 /// Return the first existing candidate path for the valid-keys file, or `None`
 /// if no candidate path exists on disk.
+///
+/// **Note on the env-var override (priority 1):** when `TRISYNC_LICENSE_KEYS_FILE`
+/// is set, the path is returned as-is without checking whether the file exists on
+/// disk.  If the file is missing, `load_valid_keys` will return an `Err` describing
+/// the I/O failure.  Priorities 2 and 3 only return a path when the file already
+/// exists on disk.
 fn resolve_keys_file_path() -> Option<PathBuf> {
     // 1. Explicit override via environment variable.
     if let Ok(path) = env::var(LICENSE_KEYS_FILE_ENV) {
