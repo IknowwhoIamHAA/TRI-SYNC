@@ -80,10 +80,32 @@ These invariants form the foundation of the TRI‑SYNC protocol.
 ## **🛠 Developer Tooling**
 
 ### **CLI**
-- Run workflows  
-- Inspect state  
-- Replay events  
-- Debug deterministically  
+- Run workflows
+- Inspect state
+- Replay events
+- Debug deterministically
+
+#### CLI Commands
+
+```bash
+# Apply a state write at a specific tick
+tri-sync apply --namespace <ns> --key <ns:key> --value <json> --tick <n>
+
+# Delete a key at a specific tick
+tri-sync delete --namespace <ns> --key <ns:key> --tick <n>
+
+# Replay an event log
+tri-sync replay --log <path>
+
+# Compute the canonical digest of a value
+tri-sync digest --value <json>
+
+# Print an example event
+tri-sync example
+```
+
+`--tick` defaults to `0` when not provided. It sets the logical tick number
+recorded in the `STATE_WRITE` or `STATE_DELETE` event.
 
 ### **SDK (Rust + TypeScript)**
 - Embed TRI‑SYNC into applications  

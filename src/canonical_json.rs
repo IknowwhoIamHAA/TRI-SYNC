@@ -1,5 +1,4 @@
 use serde_json::{Map, Number, Value};
-use unicode_normalization::UnicodeNormalization;
 
 use crate::decimal::canonicalize_json_number;
 
@@ -51,15 +50,18 @@ fn canonicalize_number(number: &Number) -> Result<String, String> {
     canonicalize_json_number(number)
 }
 
-/// Write a JSON string value, applying Unicode NFC normalization before encoding.
+/// Write a JSON string value.
 ///
-/// NFC normalization ensures that two strings that are semantically equal under
-/// Unicode canonical equivalence produce identical byte sequences and therefore
-/// identical SHA-256 digests.
+/// String values are written as raw UTF-8; no Unicode normalization is applied.
+/// Per TRI-SYNC SPEC §5.3, implementations MUST NOT apply NFC, NFD, NFKC, or
+/// NFKD normalization. Two strings that differ only in normalization form are
+/// considered distinct values and will produce distinct digests.
+///
+/// Control characters U+0000–U+001F are escaped as `\uXXXX` with lowercase hex
+/// digits (RFC 8785 §3.2.2).
 fn write_json_string(input: &str, out: &mut String) {
-    let normalized: String = input.nfc().collect();
     out.push('"');
-    for c in normalized.chars() {
+    for c in input.chars() {
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
@@ -125,30 +127,27 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // Fix 3: NFC normalization
+    // No Unicode normalization — raw UTF-8 bytes must be preserved
     // ---------------------------------------------------------------------------
 
     #[test]
-    fn nfc_normalizes_combining_characters() {
-        // "a\u{0301}" (a + combining acute accent, NFD form) should normalize to
-        // "\u{00E1}" (á, NFC form). Both must produce identical canonical JSON.
-        let nfd_string = "a\u{0301}";
-        let nfc_string = "\u{00E1}";
-
-        let nfd_value = serde_json::Value::String(nfd_string.to_string());
-        let nfc_value = serde_json::Value::String(nfc_string.to_string());
+    fn raw_utf8_nfd_and_nfc_produce_different_canonical_json() {
+        // SPEC §5.3: normalization is MUST NOT. NFD "a\u{0301}" and NFC "\u{00E1}"
+        // are distinct byte sequences and MUST produce distinct canonical JSON.
+        let nfd_value = serde_json::Value::String("a\u{0301}".to_string());
+        let nfc_value = serde_json::Value::String("\u{00E1}".to_string());
 
         let nfd_canonical = to_canonical_string(&nfd_value).expect("nfd canonical");
         let nfc_canonical = to_canonical_string(&nfc_value).expect("nfc canonical");
-        assert_eq!(
+        assert_ne!(
             nfd_canonical, nfc_canonical,
-            "NFD and NFC forms must produce identical canonical JSON"
+            "NFD and NFC forms must produce distinct canonical JSON (no normalization)"
         );
     }
 
     #[test]
-    fn nfc_normalizes_object_keys() {
-        // Object with NFD key must sort and hash identically to NFC key.
+    fn raw_utf8_nfd_and_nfc_object_keys_produce_different_canonical_json() {
+        // Object keys that differ only in normalization form are distinct keys.
         let mut nfd_map = serde_json::Map::new();
         nfd_map.insert("a\u{0301}".to_string(), json!(1));
         let mut nfc_map = serde_json::Map::new();
@@ -156,7 +155,10 @@ mod tests {
 
         let nfd_canonical = to_canonical_string(&serde_json::Value::Object(nfd_map)).expect("nfd");
         let nfc_canonical = to_canonical_string(&serde_json::Value::Object(nfc_map)).expect("nfc");
-        assert_eq!(nfd_canonical, nfc_canonical);
+        assert_ne!(
+            nfd_canonical, nfc_canonical,
+            "NFD and NFC object keys must produce distinct canonical JSON"
+        );
     }
 
     // ---------------------------------------------------------------------------
