@@ -50,6 +50,15 @@ fn canonicalize_number(number: &Number) -> Result<String, String> {
     canonicalize_json_number(number)
 }
 
+/// Write a JSON string value.
+///
+/// String values are written as raw UTF-8; no Unicode normalization is applied.
+/// Per TRI-SYNC SPEC §5.3, implementations MUST NOT apply NFC, NFD, NFKC, or
+/// NFKD normalization. Two strings that differ only in normalization form are
+/// considered distinct values and will produce distinct digests.
+///
+/// Control characters U+0000–U+001F are escaped as `\uXXXX` with lowercase hex
+/// digits (RFC 8785 §3.2.2).
 fn write_json_string(input: &str, out: &mut String) {
     out.push('"');
     for c in input.chars() {
@@ -77,7 +86,7 @@ fn write_json_string(input: &str, out: &mut String) {
 fn hex_digit(nibble: u8) -> char {
     match nibble {
         0..=9 => (b'0' + nibble) as char,
-        10..=15 => (b'A' + nibble - 10) as char,
+        10..=15 => (b'a' + nibble - 10) as char,
         _ => unreachable!(),
     }
 }
@@ -114,6 +123,117 @@ mod tests {
         assert_eq!(
             to_canonical_string(&value).expect("canonical encoding"),
             "0.0000001"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // No Unicode normalization — raw UTF-8 bytes must be preserved
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn raw_utf8_nfd_and_nfc_produce_different_canonical_json() {
+        // SPEC §5.3: normalization is MUST NOT. NFD "a\u{0301}" and NFC "\u{00E1}"
+        // are distinct byte sequences and MUST produce distinct canonical JSON.
+        let nfd_value = serde_json::Value::String("a\u{0301}".to_string());
+        let nfc_value = serde_json::Value::String("\u{00E1}".to_string());
+
+        let nfd_canonical = to_canonical_string(&nfd_value).expect("nfd canonical");
+        let nfc_canonical = to_canonical_string(&nfc_value).expect("nfc canonical");
+        assert_ne!(
+            nfd_canonical, nfc_canonical,
+            "NFD and NFC forms must produce distinct canonical JSON (no normalization)"
+        );
+    }
+
+    #[test]
+    fn raw_utf8_nfd_and_nfc_object_keys_produce_different_canonical_json() {
+        // Object keys that differ only in normalization form are distinct keys.
+        let mut nfd_map = serde_json::Map::new();
+        nfd_map.insert("a\u{0301}".to_string(), json!(1));
+        let mut nfc_map = serde_json::Map::new();
+        nfc_map.insert("\u{00E1}".to_string(), json!(1));
+
+        let nfd_canonical = to_canonical_string(&serde_json::Value::Object(nfd_map)).expect("nfd");
+        let nfc_canonical = to_canonical_string(&serde_json::Value::Object(nfc_map)).expect("nfc");
+        assert_ne!(
+            nfd_canonical, nfc_canonical,
+            "NFD and NFC object keys must produce distinct canonical JSON"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Fix 12: RFC 8785 / JCS conformance test vectors
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn rfc8785_null_value() {
+        assert_eq!(
+            to_canonical_string(&serde_json::Value::Null).expect("null"),
+            "null"
+        );
+    }
+
+    #[test]
+    fn rfc8785_boolean_values() {
+        assert_eq!(to_canonical_string(&json!(true)).expect("true"), "true");
+        assert_eq!(to_canonical_string(&json!(false)).expect("false"), "false");
+    }
+
+    #[test]
+    fn rfc8785_empty_object() {
+        assert_eq!(to_canonical_string(&json!({})).expect("empty obj"), "{}");
+    }
+
+    #[test]
+    fn rfc8785_empty_array() {
+        assert_eq!(to_canonical_string(&json!([])).expect("empty arr"), "[]");
+    }
+
+    #[test]
+    fn rfc8785_string_escapes_control_characters() {
+        // U+0000 through U+001F must be escaped as \uXXXX with lowercase hex (RFC 8785 §3.2.2)
+        let value = serde_json::Value::String("\u{0000}".to_string());
+        let canonical = to_canonical_string(&value).expect("control char");
+        assert_eq!(canonical, r#""\u0000""#);
+
+        let value = serde_json::Value::String("\u{001F}".to_string());
+        let canonical = to_canonical_string(&value).expect("control char");
+        assert_eq!(canonical, r#""\u001f""#);
+    }
+
+    #[test]
+    fn rfc8785_string_escapes_backslash_and_quote() {
+        let value = serde_json::Value::String("a\"b\\c".to_string());
+        assert_eq!(
+            to_canonical_string(&value).expect("escapes"),
+            r#""a\"b\\c""#
+        );
+    }
+
+    #[test]
+    fn rfc8785_nested_object_keys_sorted_lexicographically() {
+        // RFC 8785 §3.2.3: keys sorted by their UTF-16 code unit sequence.
+        // For ASCII-only keys, byte order equals UTF-16 code unit order.
+        let value = json!({"b": 2, "a": 1, "c": 3});
+        assert_eq!(
+            to_canonical_string(&value).expect("sorted"),
+            r#"{"a":1,"b":2,"c":3}"#
+        );
+    }
+
+    #[test]
+    fn rfc8785_array_preserves_order() {
+        let value = json!([3, 1, 2]);
+        assert_eq!(to_canonical_string(&value).expect("array"), "[3,1,2]");
+    }
+
+    #[test]
+    fn rfc8785_integer_numbers() {
+        assert_eq!(to_canonical_string(&json!(0)).expect("zero"), "0");
+        assert_eq!(to_canonical_string(&json!(-1)).expect("neg"), "-1");
+        assert_eq!(
+            to_canonical_string(&json!(1234567890)).expect("large"),
+            "1234567890"
         );
     }
 }

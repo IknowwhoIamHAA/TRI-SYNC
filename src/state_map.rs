@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::canonical_json::to_canonical_string;
 use crate::decimal::validate_decimal;
@@ -31,6 +32,55 @@ impl BsmValue {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct BinaryStateMap {
     inner: BTreeMap<String, BsmValue>,
+}
+
+/// A thread-safe, transactional wrapper around [`BinaryStateMap`].
+///
+/// All mutations are guarded by an internal mutex, and batch operations
+/// are applied to a staged copy before being committed atomically.
+#[derive(Debug, Default)]
+pub struct TransactionalStateMap {
+    inner: Mutex<BinaryStateMap>,
+}
+
+impl TransactionalStateMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_state(state: BinaryStateMap) -> Self {
+        Self {
+            inner: Mutex::new(state),
+        }
+    }
+
+    /// Acquire a lock and return a guard to the inner [`BinaryStateMap`].
+    pub fn lock(&self) -> Result<MutexGuard<'_, BinaryStateMap>, String> {
+        self.inner
+            .lock()
+            .map_err(|_: PoisonError<_>| "STATE_LOCK_POISON: mutex was poisoned".to_string())
+    }
+
+    /// Apply a batch of mutations atomically.
+    ///
+    /// `f` receives a mutable reference to a **staged copy** of the current
+    /// state.  Only if `f` returns `Ok(())` is the staged copy committed.
+    /// Any error from `f` leaves the live state unchanged.
+    pub fn apply_batch<F>(&self, f: F) -> Result<(), String>
+    where
+        F: FnOnce(&mut BinaryStateMap) -> Result<(), String>,
+    {
+        let mut guard = self.lock()?;
+        let mut staged = guard.clone();
+        f(&mut staged)?;
+        *guard = staged;
+        Ok(())
+    }
+
+    /// Read a snapshot of the current state without holding the lock.
+    pub fn snapshot(&self) -> Result<BinaryStateMap, String> {
+        Ok(self.lock()?.clone())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -523,6 +573,46 @@ mod tests {
         assert_eq!(
             digest,
             "768e154f65fb12f4419452ac76223006bf9097187294b0d9cec1260e22c664d3"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Fix 5: TransactionalStateMap tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn transactional_batch_commits_on_success() {
+        use super::TransactionalStateMap;
+
+        let tsm = TransactionalStateMap::new();
+        tsm.apply_batch(|state| {
+            state.set("tenant-a", "tenant-a:x", BsmValue::Integer(1))?;
+            state.set("tenant-a", "tenant-a:y", BsmValue::Integer(2))
+        })
+        .expect("batch should commit");
+
+        let snap = tsm.snapshot().expect("snapshot");
+        assert_eq!(snap.get("tenant-a:x"), Some(&BsmValue::Integer(1)));
+        assert_eq!(snap.get("tenant-a:y"), Some(&BsmValue::Integer(2)));
+    }
+
+    #[test]
+    fn transactional_batch_rolls_back_on_failure() {
+        use super::TransactionalStateMap;
+
+        let tsm = TransactionalStateMap::new();
+        let err = tsm
+            .apply_batch(|state| {
+                state.set("tenant-a", "tenant-a:x", BsmValue::Integer(99))?;
+                Err("deliberate failure".to_string())
+            })
+            .expect_err("batch should fail");
+        assert!(err.contains("deliberate failure"));
+
+        let snap = tsm.snapshot().expect("snapshot");
+        assert!(
+            snap.get("tenant-a:x").is_none(),
+            "state must be unchanged after rollback"
         );
     }
 }

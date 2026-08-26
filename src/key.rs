@@ -33,6 +33,12 @@ pub fn validate_namespace(namespace: &str) -> Result<(), String> {
         }
     }
 
+    if namespace == RESERVED_SYSTEM_NAMESPACE {
+        return Err(format!(
+            "namespace '{RESERVED_SYSTEM_NAMESPACE}' is reserved and may not be used by tenants"
+        ));
+    }
+
     Ok(())
 }
 
@@ -75,5 +81,10 @@ mod tests {
     fn validates_namespace_key_prefix() {
         assert!(validate_key("tenant-a", "tenant-a:counter").is_ok());
         assert!(validate_key("tenant-a", "tenant-b:counter").is_err());
+    }
+
+    #[test]
+    fn rejects_reserved_system_namespace() {
+        assert!(validate_namespace("trisync-system").is_err());
     }
 }

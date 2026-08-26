@@ -6,6 +6,7 @@ use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
 use tri_sync::event::{Event, ZERO_DIGEST_HEX};
 use tri_sync::event_log::AppendOnlyEventLog;
+use tri_sync::license;
 use tri_sync::replay::ReplayEngine;
 use tri_sync::state_map::BsmValue;
 
@@ -28,6 +29,9 @@ enum Commands {
         key: String,
         #[arg(long)]
         value: String,
+        /// Logical tick (monotonic epoch counter) for this event. Defaults to 0.
+        #[arg(long, default_value_t = 0)]
+        tick: u64,
     },
     Delete {
         #[arg(long)]
@@ -36,6 +40,9 @@ enum Commands {
         namespace: String,
         #[arg(long)]
         key: String,
+        /// Logical tick (monotonic epoch counter) for this event. Defaults to 0.
+        #[arg(long, default_value_t = 0)]
+        tick: u64,
     },
     Replay {
         #[arg(long)]
@@ -52,6 +59,12 @@ enum Commands {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Validate the commercial license key before running any command.
+    if let Err(msg) = license::check() {
+        eprintln!("TRI-SYNC license error:\n\n{msg}\n");
+        std::process::exit(1);
+    }
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -60,6 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             namespace,
             key,
             value,
+            tick,
         } => {
             let log = AppendOnlyEventLog::open(log);
             let events = log.load()?;
@@ -70,7 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let key = namespaced_key(&namespace, &key);
             let event = Event::state_write(
                 seq,
-                0,
+                tick,
                 namespace,
                 key,
                 BsmValue::Bytes(value.into_bytes()),
@@ -85,6 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             log,
             namespace,
             key,
+            tick,
         } => {
             let log = AppendOnlyEventLog::open(log);
             let events = log.load()?;
@@ -93,7 +108,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .last()
                 .map_or(ZERO_DIGEST_HEX.to_string(), |event| event.digest.clone());
             let key = namespaced_key(&namespace, &key);
-            let event = Event::state_delete(seq, 0, namespace, key, None, true, prev)?;
+            let event = Event::state_delete(seq, tick, namespace, key, None, true, prev)?;
             log.append(&event)?;
             println!("appended STATE_DELETE at seq {}", event.seq);
         }
