@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.0] - 2026-08-26
+## [1.0.0] - 2026-08-26 — **Protocol Frozen. Production-Ready.**
+
+> **This is the stable, commercially-licensed release of TRI-SYNC.**  
+> The v1.0.0 wire protocol is frozen. All future versions will be backward-compatible.  
+> 63 tests pass. CodeQL: 0 alerts. No TODOs or FIXMEs in protocol-critical code.
 
 ### Added
 - Public API freeze declaration for TRI-SYNC Runtime v1.0.0.
@@ -13,6 +17,12 @@ All notable changes to this project will be documented in this file.
 - `--tick` flag on `apply` and `delete` CLI subcommands (default `0`).
 - `docs/cross-language-determinism.md` — wire-format byte vectors and encoding
   rules for cross-language conformance.
+- `docs/product.md` — market-facing product overview, use cases, and guarantees.
+- `docs/licensing.md` — commercial licensing flow, tier descriptions, and FAQ.
+- `COMMERCIAL_LICENSE.md` — commercial license terms.
+- `src/license.rs` — key-based license activation; reads `TRISYNC_LICENSE_KEY`
+  from the environment; validates against a key-store file; clear error + exit
+  on missing or invalid key.
 
 ### Changed (Audit Fixes — required before 1.0.0 freeze)
 

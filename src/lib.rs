@@ -5,5 +5,6 @@ pub mod event;
 pub mod event_log;
 pub mod hex;
 pub mod key;
+pub mod license;
 pub mod replay;
 pub mod state_map;
