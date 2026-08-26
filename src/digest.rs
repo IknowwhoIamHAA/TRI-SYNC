@@ -2,9 +2,15 @@ use sha2::{Digest, Sha256};
 
 use crate::hex::encode_hex;
 
-pub fn sha256_hex(data: &[u8]) -> String {
+pub fn sha256_bytes(data: &[u8]) -> [u8; 32] {
     let digest = Sha256::digest(data);
-    encode_hex(digest.as_slice())
+    let mut out = [0u8; 32];
+    out.copy_from_slice(digest.as_slice());
+    out
+}
+
+pub fn sha256_hex(data: &[u8]) -> String {
+    encode_hex(&sha256_bytes(data))
 }
 
 #[cfg(test)]
