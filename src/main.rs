@@ -48,6 +48,12 @@ enum Commands {
         #[arg(long)]
         log: PathBuf,
     },
+    /// Verify an event log: replay from genesis, print the final root digest,
+    /// and exit 0 on success or 1 if the log is invalid.
+    Verify {
+        #[arg(long)]
+        log: PathBuf,
+    },
     Digest {
         #[arg(long)]
         input: String,
@@ -118,6 +124,35 @@ fn main() -> Result<(), Box<dyn Error>> {
             let state = ReplayEngine::replay(&events).map_err(std::io::Error::other)?;
             let json_value = serde_json::to_value(state.to_json_value())?;
             println!("{}", to_canonical_string(&json_value)?);
+        }
+        Commands::Verify { log } => {
+            let log_path = log.clone();
+            let log = AppendOnlyEventLog::open(log);
+            let events = log.load().map_err(|err| {
+                eprintln!(
+                    "VERIFY FAILED: could not load log {}: {err}",
+                    log_path.display()
+                );
+                std::process::exit(1);
+            })?;
+            match ReplayEngine::replay(&events) {
+                Ok(state) => match state.root_digest_hex() {
+                    Ok(digest) => {
+                        println!("OK");
+                        println!("log={}", log_path.display());
+                        println!("events={}", events.len());
+                        println!("root_digest={digest}");
+                    }
+                    Err(err) => {
+                        eprintln!("VERIFY FAILED: root digest error: {err}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(err) => {
+                    eprintln!("VERIFY FAILED: replay error: {err}");
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Digest { input } => {
             println!("{}", sha256_hex(input.as_bytes()));

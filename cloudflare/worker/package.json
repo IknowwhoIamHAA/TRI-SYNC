@@ -1,16 +1,14 @@
 {
   "name": "tri-sync-worker",
   "version": "1.0.0",
-  "description": "TRI-SYNC Cloudflare Worker — Stripe webhook → KV → Resend Automations",
+  "description": "TRI-SYNC Cloudflare Worker — Stripe webhook → KV → Resend email",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },
-  "dependencies": {
-    "stripe": "^16.0.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "wrangler": "^3.0.0"
   }

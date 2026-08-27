@@ -70,6 +70,9 @@ tri-sync delete \
   --key job-status \
   --tick 2
 
+# Verify the log and print the final root digest (exit 1 on any protocol violation)
+tri-sync verify --log events.jsonl
+
 # Replay the log and print final state as canonical JSON
 tri-sync replay --log events.jsonl
 
@@ -81,6 +84,17 @@ tri-sync example --log /tmp/example.jsonl
 ```
 
 `--tick` (default `0`) sets the logical tick number on the event. Ticks must be monotonically non-decreasing within a namespace.
+
+### `verify` output
+
+```
+OK
+log=events.jsonl
+events=3
+root_digest=768e154f...
+```
+
+Exit code `0` means the log is valid. Exit code `1` means a protocol violation was detected (sequence gap, digest mismatch, duplicate event, etc.).
 
 ---
 
@@ -209,6 +223,64 @@ TRI-SYNC is purpose-built for regulated and high-assurance environments:
 
 ---
 
+## Cloudflare Worker (License Issuance)
+
+The `cloudflare/worker/` directory contains a zero-dependency Cloudflare Worker that
+handles the full Stripe → KV → Resend email pipeline for license issuance.
+
+### Routes
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/webhook` | Stripe webhook receiver (HMAC-SHA256 verified) |
+| `GET` | `/validate?key=TRI-...` | License key lookup — returns metadata JSON or 404 |
+
+### Setup
+
+```bash
+cd cloudflare/worker
+npm install
+
+# Create KV namespaces
+wrangler kv namespace create LICENSE_KV --env staging
+wrangler kv namespace create LICENSE_KV --env production
+
+# Paste the returned namespace IDs into wrangler.toml
+
+# Set secrets (repeat for each --env)
+wrangler secret put STRIPE_WEBHOOK_SECRET --env production
+wrangler secret put RESEND_API_KEY         --env production
+wrangler secret put RESEND_FROM_EMAIL      --env production
+
+# Deploy
+wrangler deploy --env staging
+wrangler deploy --env production
+```
+
+`STRIPE_WEBHOOK_SECRET` is the raw `whsec_...` value from the Stripe dashboard — **not** Base64-encoded.
+
+### End-to-End Flow
+
+```
+Customer pays on Stripe
+  └─ Stripe sends POST /webhook
+       └─ Worker verifies HMAC-SHA256 signature
+            └─ checkout.session.completed
+                 ├─ Idempotency check (LICENSE_KV.get("license:<sessionId>"))
+                 ├─ Generate key: TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
+                 ├─ KV.put("license:<sessionId>", { licenseKey, email, ... })
+                 ├─ KV.put("bykey:<licenseKey>", sessionId)   ← reverse index
+                 └─ Resend email with license key
+
+Customer activates:
+  export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
+  tri-sync verify --log events.jsonl
+  # OK
+  # root_digest=768e154f...
+```
+
+---
+
 ## Project Status
 
 **v1.0.0 — Protocol frozen. Production-ready.**
@@ -218,6 +290,8 @@ TRI-SYNC is purpose-built for regulated and high-assurance environments:
 - ✅ CodeQL: 0 security alerts
 - ✅ No TODOs or FIXMEs in protocol-critical code
 - ✅ Cross-language determinism test vector pinned: `768e154f…`
+- ✅ `verify` subcommand — replay-based audit tool, exits 1 on any protocol violation
+- ✅ Cloudflare Worker — Stripe → KV → Resend, no SDK, HMAC-SHA256 verified
 
 ---
 

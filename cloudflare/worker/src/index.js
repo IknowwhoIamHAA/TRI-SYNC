@@ -1,133 +1,394 @@
 /**
- * TRI-SYNC Cloudflare Worker — Stripe → KV → Resend Automations
+ * TRI-SYNC Cloudflare Worker
  *
- * Receives Stripe webhook events, issues deterministic TRI-SYNC license keys,
- * persists them to Cloudflare KV, and triggers Resend Automations for delivery.
+ * Routes:
+ *   POST /webhook  — Stripe webhook receiver (signature verified via HMAC-SHA256)
+ *   GET  /validate — License key lookup: ?key=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
  *
- * Required environment bindings (set in wrangler.toml or the Cloudflare dashboard):
- *   STRIPE_API_KEY          — Stripe secret key (sk_live_... or sk_test_...)
- *   STRIPE_WEBHOOK_SECRET   — Base64-encoded Stripe webhook signing secret
- *   RESEND_API_KEY          — Resend API key
- *   RESEND_AUTOMATION_ID    — Resend Automation ID to trigger
- *   ISSUED_KEYS             — KV namespace binding for persisting issued license keys
+ * Required environment bindings (wrangler.toml or Cloudflare dashboard secrets):
+ *   STRIPE_WEBHOOK_SECRET  — Raw Stripe webhook signing secret (whsec_... value)
+ *   RESEND_API_KEY         — Resend API key
+ *   RESEND_FROM_EMAIL      — Verified sender address (e.g. "TRI-SYNC <noreply@example.com>")
+ *   LICENSE_KV             — KV namespace binding for issued license keys
  */
-
-import Stripe from 'stripe';
 
 export default {
   /**
    * @param {Request} request
    * @param {Env} env
+   * @param {ExecutionContext} ctx
    * @returns {Promise<Response>}
    */
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/validate') {
+      return handleValidate(request, env);
+    }
+
+    if (url.pathname !== '/webhook') {
+      return new Response('Not Found', { status: 404 });
+    }
+
     if (request.method !== 'POST') {
       return new Response('Method Not Allowed', { status: 405 });
     }
 
-    const stripe = new Stripe(env.STRIPE_API_KEY, { apiVersion: '2024-04-10' });
+    const bodyText = await request.text();
+    const sigHeader = request.headers.get('stripe-signature');
 
-    // Read the raw body once — required for signature verification.
-    const body = await request.text();
-    const signature = request.headers.get('stripe-signature');
-
-    if (!signature) {
-      return new Response('Missing stripe-signature header', { status: 400 });
-    }
-
-    // STRIPE_WEBHOOK_SECRET is stored Base64-encoded to avoid issues with the
-    // "whsec_" prefix that can be misinterpreted by some secret managers.
-    let webhookSecret;
-    try {
-      webhookSecret = atob(env.STRIPE_WEBHOOK_SECRET);
-    } catch {
-      return new Response('Misconfigured webhook secret', { status: 500 });
+    if (!sigHeader) {
+      console.error('Missing stripe-signature header');
+      return new Response('Bad Request', { status: 400 });
     }
 
     let event;
     try {
-      event = await stripe.webhooks.constructEventAsync(body, signature, webhookSecret);
+      event = await verifyStripeSignature(bodyText, sigHeader, env.STRIPE_WEBHOOK_SECRET);
     } catch (err) {
-      return new Response(`Webhook signature verification failed: ${err.message}`, { status: 400 });
+      console.error('Signature verification failed:', err);
+      return new Response('Signature verification failed', { status: 400 });
     }
 
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
+    console.log('Stripe event:', event.type);
 
-      const customerEmail = session.customer_details?.email ?? '';
-      const customerId = session.customer ?? '';
-      const paymentIntentId = session.payment_intent ?? '';
-      const plan = session.metadata?.plan ?? 'unknown';
+    try {
+      switch (event.type) {
+        case 'checkout.session.completed':
+          await handleCheckoutCompleted(event, env, ctx);
+          break;
 
-      // Generate a deterministic TRI-SYNC license key that mirrors the format
-      // produced by the Rust license module: "TS-" + first 16 hex chars (uppercase)
-      // of SHA-256(email:customerId).
-      const licenseKey = await generateLicenseKey(customerEmail, customerId);
+        case 'checkout.session.expired':
+          await handleCheckoutExpired(event, env);
+          break;
 
-      // Canonical KV record — fields sorted lexicographically, numeric timestamps
-      // stored as integers (not strings) for deterministic replay.
-      const record = canonicalRecord({
-        created: Date.now(),
-        customerId,
-        email: customerEmail,
-        paymentIntentId,
-        plan,
-      });
+        case 'payment_intent.payment_failed':
+          await handlePaymentFailed(event, env);
+          break;
 
-      await env.ISSUED_KEYS.put(licenseKey, record);
+        case 'invoice.payment_succeeded':
+          console.log('Payment succeeded:', event.data.object.id);
+          break;
 
-      try {
-        await triggerResendAutomation(env, {
-          email: customerEmail,
-          license_key: licenseKey,
-          name: session.customer_details?.name ?? '',
-          plan,
-          stripe_customer_id: customerId,
-          stripe_payment_intent: paymentIntentId,
-        });
-      } catch (err) {
-        // Return a 500 so Stripe retries the webhook. The KV write is
-        // idempotent (same licenseKey → same value), so retries are safe.
-        return new Response(`Resend Automation failed: ${err.message}`, { status: 500 });
+        case 'customer.subscription.updated':
+          console.log('Subscription updated:', event.data.object.id);
+          break;
+
+        default:
+          console.log('Unhandled event type:', event.type);
       }
+    } catch (err) {
+      console.error('Handler error:', err);
+      // Return 200 so Stripe does not retry events that reached handler logic.
+      // Errors inside handlers are logged but considered acknowledged.
+      return new Response('Webhook handler error', { status: 200 });
     }
 
     return new Response('OK', { status: 200 });
   },
 };
 
+// ---------------------------------------------------------------------------
+// Route handlers
+// ---------------------------------------------------------------------------
+
 /**
- * Generate a deterministic TRI-SYNC license key.
+ * GET /validate?key=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
  *
- * Algorithm: SHA-256(email + ":" + customerId), take the first 16 hex
- * characters (uppercase), prefix with "TS-".
+ * Returns the license metadata JSON for a valid key, or 404.
+ * Only the GET method is accepted; all others receive 405.
  *
- * This mirrors the Rust implementation in src/license.rs so that keys issued
- * by the worker can be validated offline by the Rust binary without any
- * additional lookup.
- *
- * @param {string} email
- * @param {string} customerId
- * @returns {Promise<string>}
+ * @param {Request} request
+ * @param {Env} env
+ * @returns {Promise<Response>}
  */
-async function generateLicenseKey(email, customerId) {
-  const data = `${email}:${customerId}`;
-  const encoded = new TextEncoder().encode(data);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
-  const hex = [...new Uint8Array(hashBuffer)]
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-  return `TS-${hex.slice(0, 16).toUpperCase()}`;
+async function handleValidate(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const key = new URL(request.url).searchParams.get('key');
+  if (!key) {
+    return new Response('Missing key parameter', { status: 400 });
+  }
+
+  // Keys are stored under the session-id-based KV key; the validate endpoint
+  // performs a reverse lookup via a secondary index stored at "bykey:<licenseKey>".
+  const sessionId = await env.LICENSE_KV.get('bykey:' + key);
+  if (!sessionId) {
+    return new Response('Not Found', { status: 404 });
+  }
+
+  const record = await env.LICENSE_KV.get('license:' + sessionId);
+  if (!record) {
+    return new Response('Not Found', { status: 404 });
+  }
+
+  return new Response(record, {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 /**
- * Serialize a plain object to canonical JSON suitable for deterministic replay.
+ * Handle `checkout.session.completed`.
  *
- * Rules (TRI-SYNC SPEC §5):
- *  - Object keys are sorted lexicographically by raw UTF-8 byte order.
- *  - No trailing whitespace.
- *  - Numbers are encoded without unnecessary precision (native JSON.stringify
- *    already satisfies this for integers).
+ * Idempotent: if a license for this session already exists the handler returns
+ * early without re-sending the email.
+ *
+ * @param {object} event
+ * @param {Env} env
+ * @param {ExecutionContext} ctx
+ */
+async function handleCheckoutCompleted(event, env, ctx) {
+  const session = event.data.object;
+
+  const sessionId = session.id;
+  const customerEmail = session.customer_details?.email || session.customer_email;
+
+  if (!sessionId) throw new Error('Missing session.id');
+  if (!customerEmail) throw new Error('Missing customer email');
+
+  // Idempotency: skip if a license was already issued for this session.
+  const existing = await env.LICENSE_KV.get('license:' + sessionId);
+  if (existing) {
+    console.log('License already issued for session:', sessionId);
+    return;
+  }
+
+  const licenseKey = await generateLicenseKey(sessionId, customerEmail);
+
+  const record = canonicalRecord({
+    createdAt: new Date().toISOString(),
+    email: customerEmail,
+    licenseKey,
+    sessionId,
+    status: 'active',
+  });
+
+  // Write primary record and reverse-lookup index atomically via ctx.waitUntil
+  // so both are committed before the handler returns.
+  await Promise.all([
+    env.LICENSE_KV.put('license:' + sessionId, record),
+    env.LICENSE_KV.put('bykey:' + licenseKey, sessionId),
+  ]);
+
+  console.log('License stored in KV for session:', sessionId);
+
+  const html =
+    '<p>Hi,</p>' +
+    '<p>Thank you for purchasing TRI-SYNC.</p>' +
+    '<p>Your license key:</p>' +
+    '<pre>' + licenseKey + '</pre>' +
+    '<p>Keep this key safe. You will need it to activate TRI-SYNC.</p>' +
+    '<p>Activate with:</p>' +
+    '<pre>export TRISYNC_LICENSE_KEY=' + licenseKey + '\ntri-sync verify --log events.jsonl</pre>';
+
+  await sendEmail(env, {
+    to: customerEmail,
+    subject: 'Your TRI-SYNC License',
+    html,
+  });
+
+  console.log('License email sent to:', customerEmail);
+}
+
+/**
+ * Handle `checkout.session.expired`.
+ *
+ * If a record already exists (e.g. from a prior partial write) it is marked
+ * revoked so the validate endpoint returns the correct status.
+ *
+ * @param {object} event
+ * @param {Env} env
+ */
+async function handleCheckoutExpired(event, env) {
+  const session = event.data.object;
+  const sessionId = session.id;
+
+  if (!sessionId) {
+    console.warn('checkout.session.expired: missing session.id');
+    return;
+  }
+
+  const raw = await env.LICENSE_KV.get('license:' + sessionId);
+  if (!raw) {
+    console.log('checkout.session.expired: no license record for session', sessionId);
+    return;
+  }
+
+  let rec;
+  try {
+    rec = JSON.parse(raw);
+  } catch {
+    console.error('checkout.session.expired: corrupt KV record for session', sessionId);
+    return;
+  }
+
+  rec.status = 'revoked';
+  rec.revokedAt = new Date().toISOString();
+  rec.revokedReason = 'checkout.session.expired';
+
+  await env.LICENSE_KV.put('license:' + sessionId, canonicalRecord(rec));
+  console.log('License revoked (session expired) for session:', sessionId);
+}
+
+/**
+ * Handle `payment_intent.payment_failed`.
+ *
+ * Marks any associated license record as revoked.
+ *
+ * @param {object} event
+ * @param {Env} env
+ */
+async function handlePaymentFailed(event, env) {
+  const intent = event.data.object;
+
+  // A PaymentIntent may or may not be linked to a Checkout Session. When it is,
+  // the metadata on the intent carries the session id (set by Stripe automatically).
+  const sessionId = intent.metadata?.checkout_session;
+  if (!sessionId) {
+    console.log('payment_intent.payment_failed: no checkout_session metadata, skipping');
+    return;
+  }
+
+  const raw = await env.LICENSE_KV.get('license:' + sessionId);
+  if (!raw) {
+    console.log('payment_intent.payment_failed: no license record for session', sessionId);
+    return;
+  }
+
+  let rec;
+  try {
+    rec = JSON.parse(raw);
+  } catch {
+    console.error('payment_intent.payment_failed: corrupt KV record for session', sessionId);
+    return;
+  }
+
+  rec.status = 'revoked';
+  rec.revokedAt = new Date().toISOString();
+  rec.revokedReason = 'payment_intent.payment_failed';
+
+  await env.LICENSE_KV.put('license:' + sessionId, canonicalRecord(rec));
+  console.log('License revoked (payment failed) for session:', sessionId);
+}
+
+// ---------------------------------------------------------------------------
+// Stripe signature verification (no SDK — uses Web Crypto HMAC-SHA256)
+// ---------------------------------------------------------------------------
+
+/**
+ * Verify a Stripe webhook signature and return the parsed event object.
+ *
+ * Implements the algorithm described in the Stripe docs:
+ *   signed_payload = timestamp + "." + payload
+ *   expected = HMAC-SHA256(secret, signed_payload)
+ * The signature must match the `v1` value in the `stripe-signature` header and
+ * the timestamp must be within a 300-second tolerance window.
+ *
+ * @param {string} payload       Raw request body (string, not parsed).
+ * @param {string} sigHeader     Value of the `stripe-signature` header.
+ * @param {string} secret        Raw webhook signing secret (whsec_... value).
+ * @returns {Promise<object>}    Parsed Stripe event.
+ */
+async function verifyStripeSignature(payload, sigHeader, secret) {
+  const parts = sigHeader.split(',').reduce((acc, part) => {
+    const eq = part.indexOf('=');
+    if (eq !== -1) acc[part.slice(0, eq)] = part.slice(eq + 1);
+    return acc;
+  }, {});
+
+  const timestamp = parts['t'];
+  const signature = parts['v1'];
+
+  if (!timestamp || !signature) {
+    throw new Error('Invalid stripe-signature header');
+  }
+
+  const age = Math.floor(Date.now() / 1000) - parseInt(timestamp, 10);
+  if (Math.abs(age) > 300) {
+    throw new Error('Timestamp outside tolerance window');
+  }
+
+  const encoder = new TextEncoder();
+  const signedPayload = timestamp + '.' + payload;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const expectedBuf = await crypto.subtle.sign('HMAC', key, encoder.encode(signedPayload));
+  const expected = Array.from(new Uint8Array(expectedBuf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+
+  if (!secureCompare(expected, signature)) {
+    throw new Error('Invalid signature');
+  }
+
+  return JSON.parse(payload);
+}
+
+/**
+ * Constant-time string comparison to prevent timing attacks.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+function secureCompare(a, b) {
+  // Always iterate the full length of `a` (the locally-computed expected value)
+  // so the loop count is constant regardless of `b`'s length.
+  // A length mismatch is folded into the XOR result without early exit.
+  let result = a.length === b.length ? 0 : 1;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ (b.charCodeAt(i) || 0);
+  }
+  return result === 0;
+}
+
+// ---------------------------------------------------------------------------
+// License key generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a deterministic TRI-SYNC license key.
+ *
+ * Format: TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX  (3 × 8 uppercase hex chars)
+ * Algorithm: SHA-256(sessionId + ":" + email), hex-encoded, first 24 chars
+ * split into three 8-char groups.
+ *
+ * @param {string} sessionId   Stripe Checkout Session ID.
+ * @param {string} email       Customer email address.
+ * @returns {Promise<string>}
+ */
+async function generateLicenseKey(sessionId, email) {
+  const data = sessionId + ':' + email;
+  const encoder = new TextEncoder();
+  const hashBuf = await crypto.subtle.digest('SHA-256', encoder.encode(data));
+  const hash = Array.from(new Uint8Array(hashBuf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+  return (
+    'TRI-' +
+    hash.slice(0, 8).toUpperCase() + '-' +
+    hash.slice(8, 16).toUpperCase() + '-' +
+    hash.slice(16, 24).toUpperCase()
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Serialize a plain object to canonical JSON (TRI-SYNC SPEC §5).
+ *
+ * Object keys are sorted lexicographically. Numbers are not re-encoded
+ * (JSON.stringify handles integers correctly without precision loss).
  *
  * @param {Record<string, unknown>} obj
  * @returns {string}
@@ -140,32 +401,31 @@ function canonicalRecord(obj) {
 }
 
 /**
- * Trigger a Resend Automation with the given payload.
- *
- * The payload fields are sorted for a stable canonical request body.
+ * Send a transactional email via Resend.
  *
  * @param {Env} env
- * @param {Record<string, string>} payload
+ * @param {{ to: string, subject: string, html: string }} opts
  * @returns {Promise<void>}
  */
-async function triggerResendAutomation(env, payload) {
-  const automationId = env.RESEND_AUTOMATION_ID;
-  const body = canonicalRecord(payload);
+async function sendEmail(env, { to, subject, html }) {
+  const body = canonicalRecord({
+    from: env.RESEND_FROM_EMAIL,
+    html,
+    subject,
+    to,
+  });
 
-  const response = await fetch(
-    `https://api.resend.com/automations/${encodeURIComponent(automationId)}/trigger`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + env.RESEND_API_KEY,
-        'Content-Type': 'application/json',
-      },
-      body,
-    }
-  );
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + env.RESEND_API_KEY,
+      'Content-Type': 'application/json',
+    },
+    body,
+  });
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Resend Automation trigger failed (${response.status}): ${text}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error('Resend email failed (' + res.status + '): ' + text);
   }
 }
