@@ -171,8 +171,9 @@ async function handleValidate(request, env) {
  * Admin endpoint to programmatically revoke a license key (refunds, chargebacks,
  * manual revocations that don't come through Stripe events).
  *
- * Authentication: send an Authorization header with value "******".
- * The token is compared in constant time against the ADMIN_SECRET binding.
+ * Authentication: the Authorization request header must contain the ADMIN_SECRET
+ * value as a bearer token. The token is compared in constant time to prevent
+ * timing attacks.
  *
  * Request body (JSON): { "key": "TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX", "reason": "..." }
  * Response: 200 OK with updated record JSON, or 400/401/404.
