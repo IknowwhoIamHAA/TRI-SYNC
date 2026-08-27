@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
-use tri_sync::event::{Event, ZERO_DIGEST_HEX};
+use tri_sync::event::{Event, EventType, ZERO_DIGEST_HEX};
 use tri_sync::event_log::AppendOnlyEventLog;
 use tri_sync::license;
 use tri_sync::replay::ReplayEngine;
@@ -53,6 +53,25 @@ enum Commands {
     Verify {
         #[arg(long)]
         log: PathBuf,
+        /// After a successful verify, append a TICK_SEAL checkpoint event to the
+        /// log.  The seal records the current root digest and event count so that
+        /// subsequent verify runs can confirm no events were added or modified.
+        #[arg(long)]
+        seal: bool,
+        /// Logical tick to use for the appended TICK_SEAL (only used with --seal).
+        #[arg(long, default_value_t = 0)]
+        tick: u64,
+        /// Namespace for the appended TICK_SEAL (only used with --seal).
+        #[arg(long, default_value = "")]
+        namespace: String,
+    },
+    /// Export the full event log as a JSON array to stdout.
+    Export {
+        #[arg(long)]
+        log: PathBuf,
+        /// Output format.  Currently only "json" is supported.
+        #[arg(long, default_value = "json")]
+        format: String,
     },
     Digest {
         #[arg(long)]
@@ -125,7 +144,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let json_value = serde_json::to_value(state.to_json_value())?;
             println!("{}", to_canonical_string(&json_value)?);
         }
-        Commands::Verify { log } => {
+        Commands::Verify {
+            log,
+            seal,
+            tick,
+            namespace,
+        } => {
             let log_path = log.clone();
             let log = AppendOnlyEventLog::open(log);
             let events = log.load().map_err(|err| {
@@ -135,6 +159,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 std::process::exit(1);
             })?;
+
+            // Warn when the log does not end with a TICK_SEAL checkpoint.
+            let ends_with_seal = events
+                .last()
+                .map(|e| e.event_type == tri_sync::event::EventType::TickSeal)
+                .unwrap_or(false);
+            if !events.is_empty() && !ends_with_seal {
+                eprintln!("WARNING: log does not end with a TICK_SEAL checkpoint");
+            }
+
             match ReplayEngine::replay(&events) {
                 Ok(state) => match state.root_digest_hex() {
                     Ok(digest) => {
@@ -142,6 +176,37 @@ fn main() -> Result<(), Box<dyn Error>> {
                         println!("log={}", log_path.display());
                         println!("events={}", events.len());
                         println!("root_digest={digest}");
+
+                        if seal {
+                            let ns = if namespace.is_empty() {
+                                events
+                                    .first()
+                                    .map(|e| e.namespace.clone())
+                                    .unwrap_or_else(|| "trisync-system".to_string())
+                            } else {
+                                namespace
+                            };
+                            let seq = log.next_sequence()?;
+                            let prev = events
+                                .last()
+                                .map_or(ZERO_DIGEST_HEX.to_string(), |e| e.digest.clone());
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
+                            let seal_event = Event::tick_seal(
+                                seq,
+                                tick,
+                                ns,
+                                events.len() as u32,
+                                digest.clone(),
+                                prev,
+                                now_ms,
+                            )?;
+                            log.append(&seal_event)?;
+                            println!("seal_seq={}", seal_event.seq);
+                            println!("seal_digest={}", seal_event.digest);
+                        }
                     }
                     Err(err) => {
                         eprintln!("VERIFY FAILED: root digest error: {err}");
@@ -153,6 +218,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                     std::process::exit(1);
                 }
             }
+        }
+        Commands::Export { log, format } => {
+            if format != "json" {
+                eprintln!("Unsupported format '{}'. Only 'json' is supported.", format);
+                std::process::exit(1);
+            }
+            let log = AppendOnlyEventLog::open(log);
+            let events = log.load()?;
+            let arr: Vec<serde_json::Value> = events
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<_, _>>()?;
+            let json = serde_json::to_value(arr)?;
+            println!("{}", to_canonical_string(&json)?);
         }
         Commands::Digest { input } => {
             println!("{}", sha256_hex(input.as_bytes()));

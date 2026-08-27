@@ -17,6 +17,7 @@ id = "REPLACE_WITH_YOUR_PREVIEW_KV_NAMESPACE_ID"
 # Secrets: wrangler secret put STRIPE_WEBHOOK_SECRET --env staging
 #          wrangler secret put RESEND_API_KEY         --env staging
 #          wrangler secret put RESEND_FROM_EMAIL      --env staging
+#          wrangler secret put ADMIN_SECRET           --env staging
 # ---------------------------------------------------------------------------
 [env.staging]
 name = "tri-sync-worker-staging"
@@ -32,6 +33,7 @@ id = "REPLACE_WITH_YOUR_STAGING_KV_NAMESPACE_ID"
 # Secrets: wrangler secret put STRIPE_WEBHOOK_SECRET --env production
 #          wrangler secret put RESEND_API_KEY         --env production
 #          wrangler secret put RESEND_FROM_EMAIL      --env production
+#          wrangler secret put ADMIN_SECRET           --env production
 # ---------------------------------------------------------------------------
 [env.production]
 name = "tri-sync-worker"

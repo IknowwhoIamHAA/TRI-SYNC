@@ -2,15 +2,25 @@
  * TRI-SYNC Cloudflare Worker
  *
  * Routes:
- *   POST /webhook  — Stripe webhook receiver (signature verified via HMAC-SHA256)
- *   GET  /validate — License key lookup: ?key=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
+ *   POST /webhook          — Stripe webhook receiver (HMAC-SHA256 verified)
+ *   GET  /validate         — License key lookup: ?key=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
+ *   POST /revoke           — Admin: revoke a license by key (requires ADMIN_SECRET header)
  *
  * Required environment bindings (wrangler.toml or Cloudflare dashboard secrets):
  *   STRIPE_WEBHOOK_SECRET  — Raw Stripe webhook signing secret (whsec_... value)
  *   RESEND_API_KEY         — Resend API key
  *   RESEND_FROM_EMAIL      — Verified sender address (e.g. "TRI-SYNC <noreply@example.com>")
+ *   ADMIN_SECRET           — Shared secret for admin endpoints (POST /revoke)
  *   LICENSE_KV             — KV namespace binding for issued license keys
  */
+
+// ---------------------------------------------------------------------------
+// Rate-limit configuration for GET /validate
+// ---------------------------------------------------------------------------
+/** Maximum validate requests allowed per IP within the window. */
+const RATE_LIMIT_MAX = 20;
+/** Rolling window duration in seconds. */
+const RATE_LIMIT_WINDOW_S = 60;
 
 export default {
   /**
@@ -24,6 +34,10 @@ export default {
 
     if (url.pathname === '/validate') {
       return handleValidate(request, env);
+    }
+
+    if (url.pathname === '/revoke') {
+      return handleRevoke(request, env);
     }
 
     if (url.pathname !== '/webhook') {
@@ -66,6 +80,10 @@ export default {
           await handlePaymentFailed(event, env);
           break;
 
+        case 'customer.subscription.deleted':
+          await handleSubscriptionDeleted(event, env);
+          break;
+
         case 'invoice.payment_succeeded':
           console.log('Payment succeeded:', event.data.object.id);
           break;
@@ -80,7 +98,6 @@ export default {
     } catch (err) {
       console.error('Handler error:', err);
       // Return 200 so Stripe does not retry events that reached handler logic.
-      // Errors inside handlers are logged but considered acknowledged.
       return new Response('Webhook handler error', { status: 200 });
     }
 
@@ -96,7 +113,8 @@ export default {
  * GET /validate?key=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
  *
  * Returns the license metadata JSON for a valid key, or 404.
- * Only the GET method is accepted; all others receive 405.
+ * Rate-limited to RATE_LIMIT_MAX requests per IP per RATE_LIMIT_WINDOW_S seconds
+ * to prevent enumeration attacks.
  *
  * @param {Request} request
  * @param {Env} env
@@ -107,13 +125,30 @@ async function handleValidate(request, env) {
     return new Response('Method Not Allowed', { status: 405 });
   }
 
+  // Rate limit by connecting IP.
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const window = Math.floor(Date.now() / 1000 / RATE_LIMIT_WINDOW_S);
+  const rlKey = 'rl:' + ip + ':' + window;
+
+  const countStr = await env.LICENSE_KV.get(rlKey);
+  const count = countStr ? parseInt(countStr, 10) : 0;
+
+  if (count >= RATE_LIMIT_MAX) {
+    return new Response('Too Many Requests', { status: 429 });
+  }
+
+  // Increment counter; TTL set to 2× the window so stale entries are
+  // eventually cleaned up even if the window boundary is crossed mid-request.
+  await env.LICENSE_KV.put(rlKey, String(count + 1), {
+    expirationTtl: RATE_LIMIT_WINDOW_S * 2,
+  });
+
   const key = new URL(request.url).searchParams.get('key');
   if (!key) {
     return new Response('Missing key parameter', { status: 400 });
   }
 
-  // Keys are stored under the session-id-based KV key; the validate endpoint
-  // performs a reverse lookup via a secondary index stored at "bykey:<licenseKey>".
+  // Reverse-lookup: bykey:<licenseKey> → sessionId
   const sessionId = await env.LICENSE_KV.get('bykey:' + key);
   if (!sessionId) {
     return new Response('Not Found', { status: 404 });
@@ -131,10 +166,85 @@ async function handleValidate(request, env) {
 }
 
 /**
+ * POST /revoke
+ *
+ * Admin endpoint to programmatically revoke a license key (refunds, chargebacks,
+ * manual revocations that don't come through Stripe events).
+ *
+ * Authentication: send an Authorization header with value "******".
+ * The token is compared in constant time against the ADMIN_SECRET binding.
+ *
+ * Request body (JSON): { "key": "TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX", "reason": "..." }
+ * Response: 200 OK with updated record JSON, or 400/401/404.
+ *
+ * @param {Request} request
+ * @param {Env} env
+ * @returns {Promise<Response>}
+ */
+async function handleRevoke(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  // Authentication
+  const authHeader = request.headers.get('Authorization') || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!env.ADMIN_SECRET || !secureCompare(token, env.ADMIN_SECRET)) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response('Invalid JSON body', { status: 400 });
+  }
+
+  const { key, reason } = body;
+  if (!key) {
+    return new Response('Missing key field', { status: 400 });
+  }
+
+  const sessionId = await env.LICENSE_KV.get('bykey:' + key);
+  if (!sessionId) {
+    return new Response('Not Found', { status: 404 });
+  }
+
+  const raw = await env.LICENSE_KV.get('license:' + sessionId);
+  if (!raw) {
+    return new Response('Not Found', { status: 404 });
+  }
+
+  let rec;
+  try {
+    rec = JSON.parse(raw);
+  } catch {
+    return new Response('Corrupt KV record', { status: 500 });
+  }
+
+  rec.status = 'revoked';
+  rec.revokedAt = new Date().toISOString();
+  rec.revokedReason = reason || 'admin_revoke';
+
+  const updated = canonicalRecord(rec);
+  await env.LICENSE_KV.put('license:' + sessionId, updated);
+  console.log('License revoked via /revoke for key:', key, 'reason:', rec.revokedReason);
+
+  return new Response(updated, {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
  * Handle `checkout.session.completed`.
  *
  * Idempotent: if a license for this session already exists the handler returns
  * early without re-sending the email.
+ *
+ * Secondary indexes written:
+ *   bykey:<licenseKey>      → sessionId
+ *   bycustomer:<customerId> → sessionId  (used by subscription deletion handler)
  *
  * @param {object} event
  * @param {Env} env
@@ -145,6 +255,7 @@ async function handleCheckoutCompleted(event, env, ctx) {
 
   const sessionId = session.id;
   const customerEmail = session.customer_details?.email || session.customer_email;
+  const customerId = session.customer;
 
   if (!sessionId) throw new Error('Missing session.id');
   if (!customerEmail) throw new Error('Missing customer email');
@@ -160,18 +271,22 @@ async function handleCheckoutCompleted(event, env, ctx) {
 
   const record = canonicalRecord({
     createdAt: new Date().toISOString(),
+    customerId: customerId || '',
     email: customerEmail,
     licenseKey,
     sessionId,
     status: 'active',
   });
 
-  // Write primary record and reverse-lookup index atomically via ctx.waitUntil
-  // so both are committed before the handler returns.
-  await Promise.all([
+  // Write primary record and all secondary indexes.
+  const writes = [
     env.LICENSE_KV.put('license:' + sessionId, record),
     env.LICENSE_KV.put('bykey:' + licenseKey, sessionId),
-  ]);
+  ];
+  if (customerId) {
+    writes.push(env.LICENSE_KV.put('bycustomer:' + customerId, sessionId));
+  }
+  await Promise.all(writes);
 
   console.log('License stored in KV for session:', sessionId);
 
@@ -196,65 +311,80 @@ async function handleCheckoutCompleted(event, env, ctx) {
 /**
  * Handle `checkout.session.expired`.
  *
- * If a record already exists (e.g. from a prior partial write) it is marked
- * revoked so the validate endpoint returns the correct status.
+ * Marks any existing license record as revoked.
  *
  * @param {object} event
  * @param {Env} env
  */
 async function handleCheckoutExpired(event, env) {
-  const session = event.data.object;
-  const sessionId = session.id;
-
+  const sessionId = event.data.object.id;
   if (!sessionId) {
     console.warn('checkout.session.expired: missing session.id');
     return;
   }
-
-  const raw = await env.LICENSE_KV.get('license:' + sessionId);
-  if (!raw) {
-    console.log('checkout.session.expired: no license record for session', sessionId);
-    return;
-  }
-
-  let rec;
-  try {
-    rec = JSON.parse(raw);
-  } catch {
-    console.error('checkout.session.expired: corrupt KV record for session', sessionId);
-    return;
-  }
-
-  rec.status = 'revoked';
-  rec.revokedAt = new Date().toISOString();
-  rec.revokedReason = 'checkout.session.expired';
-
-  await env.LICENSE_KV.put('license:' + sessionId, canonicalRecord(rec));
-  console.log('License revoked (session expired) for session:', sessionId);
+  await revokeBySession(env, sessionId, 'checkout.session.expired');
 }
 
 /**
  * Handle `payment_intent.payment_failed`.
  *
- * Marks any associated license record as revoked.
+ * Marks the associated license record (if any) as revoked.
  *
  * @param {object} event
  * @param {Env} env
  */
 async function handlePaymentFailed(event, env) {
   const intent = event.data.object;
-
-  // A PaymentIntent may or may not be linked to a Checkout Session. When it is,
-  // the metadata on the intent carries the session id (set by Stripe automatically).
   const sessionId = intent.metadata?.checkout_session;
   if (!sessionId) {
     console.log('payment_intent.payment_failed: no checkout_session metadata, skipping');
     return;
   }
+  await revokeBySession(env, sessionId, 'payment_intent.payment_failed');
+}
 
+/**
+ * Handle `customer.subscription.deleted`.
+ *
+ * Looks up the license associated with the Stripe customer via the
+ * `bycustomer:<customerId>` secondary index written at checkout, and revokes it.
+ *
+ * @param {object} event
+ * @param {Env} env
+ */
+async function handleSubscriptionDeleted(event, env) {
+  const subscription = event.data.object;
+  const customerId = subscription.customer;
+
+  if (!customerId) {
+    console.warn('customer.subscription.deleted: missing customer id');
+    return;
+  }
+
+  const sessionId = await env.LICENSE_KV.get('bycustomer:' + customerId);
+  if (!sessionId) {
+    console.log('customer.subscription.deleted: no license for customer', customerId);
+    return;
+  }
+
+  await revokeBySession(env, sessionId, 'customer.subscription.deleted');
+}
+
+// ---------------------------------------------------------------------------
+// Shared revocation helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark a license record as revoked.  No-ops silently when no record exists.
+ *
+ * @param {Env} env
+ * @param {string} sessionId
+ * @param {string} reason
+ */
+async function revokeBySession(env, sessionId, reason) {
   const raw = await env.LICENSE_KV.get('license:' + sessionId);
   if (!raw) {
-    console.log('payment_intent.payment_failed: no license record for session', sessionId);
+    console.log(reason + ': no license record for session', sessionId);
     return;
   }
 
@@ -262,16 +392,16 @@ async function handlePaymentFailed(event, env) {
   try {
     rec = JSON.parse(raw);
   } catch {
-    console.error('payment_intent.payment_failed: corrupt KV record for session', sessionId);
+    console.error(reason + ': corrupt KV record for session', sessionId);
     return;
   }
 
   rec.status = 'revoked';
   rec.revokedAt = new Date().toISOString();
-  rec.revokedReason = 'payment_intent.payment_failed';
+  rec.revokedReason = reason;
 
   await env.LICENSE_KV.put('license:' + sessionId, canonicalRecord(rec));
-  console.log('License revoked (payment failed) for session:', sessionId);
+  console.log('License revoked (' + reason + ') for session:', sessionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -281,16 +411,13 @@ async function handlePaymentFailed(event, env) {
 /**
  * Verify a Stripe webhook signature and return the parsed event object.
  *
- * Implements the algorithm described in the Stripe docs:
- *   signed_payload = timestamp + "." + payload
- *   expected = HMAC-SHA256(secret, signed_payload)
- * The signature must match the `v1` value in the `stripe-signature` header and
- * the timestamp must be within a 300-second tolerance window.
+ * signed_payload = timestamp + "." + payload
+ * expected       = HMAC-SHA256(secret, signed_payload)
  *
- * @param {string} payload       Raw request body (string, not parsed).
- * @param {string} sigHeader     Value of the `stripe-signature` header.
- * @param {string} secret        Raw webhook signing secret (whsec_... value).
- * @returns {Promise<object>}    Parsed Stripe event.
+ * @param {string} payload    Raw request body (string, not parsed).
+ * @param {string} sigHeader  Value of the `stripe-signature` header.
+ * @param {string} secret     Raw webhook signing secret (whsec_... value).
+ * @returns {Promise<object>} Parsed Stripe event.
  */
 async function verifyStripeSignature(payload, sigHeader, secret) {
   const parts = sigHeader.split(',').reduce((acc, part) => {
@@ -335,14 +462,14 @@ async function verifyStripeSignature(payload, sigHeader, secret) {
 /**
  * Constant-time string comparison to prevent timing attacks.
  *
+ * Always iterates the full length of `a` (the locally-computed value).
+ * A length mismatch is folded into the result without short-circuiting.
+ *
  * @param {string} a
  * @param {string} b
  * @returns {boolean}
  */
 function secureCompare(a, b) {
-  // Always iterate the full length of `a` (the locally-computed expected value)
-  // so the loop count is constant regardless of `b`'s length.
-  // A length mismatch is folded into the XOR result without early exit.
   let result = a.length === b.length ? 0 : 1;
   for (let i = 0; i < a.length; i++) {
     result |= a.charCodeAt(i) ^ (b.charCodeAt(i) || 0);
@@ -357,12 +484,11 @@ function secureCompare(a, b) {
 /**
  * Generate a deterministic TRI-SYNC license key.
  *
- * Format: TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX  (3 × 8 uppercase hex chars)
- * Algorithm: SHA-256(sessionId + ":" + email), hex-encoded, first 24 chars
- * split into three 8-char groups.
+ * Format:    TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX  (3 × 8 uppercase hex chars)
+ * Algorithm: SHA-256(sessionId + ":" + email), first 24 hex chars.
  *
- * @param {string} sessionId   Stripe Checkout Session ID.
- * @param {string} email       Customer email address.
+ * @param {string} sessionId  Stripe Checkout Session ID.
+ * @param {string} email      Customer email address.
  * @returns {Promise<string>}
  */
 async function generateLicenseKey(sessionId, email) {
@@ -387,8 +513,7 @@ async function generateLicenseKey(sessionId, email) {
 /**
  * Serialize a plain object to canonical JSON (TRI-SYNC SPEC §5).
  *
- * Object keys are sorted lexicographically. Numbers are not re-encoded
- * (JSON.stringify handles integers correctly without precision loss).
+ * Object keys are sorted lexicographically. Numeric values are not re-encoded.
  *
  * @param {Record<string, unknown>} obj
  * @returns {string}
