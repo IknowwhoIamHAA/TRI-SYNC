@@ -433,7 +433,7 @@
   // ⚠️  Replace with your deployed Cloudflare Worker URL.
   //     Example: https://tri-sync-worker.your-account.workers.dev
   //
-  const WORKER_URL = 'REPLACE_WITH_YOUR_WORKER_URL';
+  const WORKER_URL = 'https://trisync.dev';
 
   // ─── License key validation ───────────────────────────────────────────────
   async function doValidate() {
@@ -452,11 +452,6 @@
     show(result, 'info', 'Checking…');
 
     try {
-      if (WORKER_URL === 'REPLACE_WITH_YOUR_WORKER_URL') {
-        await delay(500);
-        return show(result, 'info', 'Key format is valid. (Worker URL not configured — update WORKER_URL in this page after deploying the Worker.)');
-      }
-
       const resp = await fetch(WORKER_URL + '/validate?key=' + encodeURIComponent(key));
 
       if (resp.status === 200) {
