@@ -1,0 +1,43 @@
+name = "tri-sync-worker"
+main = "src/index.js"
+compatibility_date = "2024-04-10"
+
+# ---------------------------------------------------------------------------
+# Top-level (dev / local preview) — uses placeholder KV id.
+# Override with a real preview namespace id for local `wrangler dev`.
+# ---------------------------------------------------------------------------
+[[kv_namespaces]]
+binding = "LICENSE_KV"
+id = "REPLACE_WITH_YOUR_PREVIEW_KV_NAMESPACE_ID"
+
+# ---------------------------------------------------------------------------
+# Staging environment
+#
+# Deploy: wrangler deploy --env staging
+# Secrets: wrangler secret put STRIPE_WEBHOOK_SECRET --env staging
+#          wrangler secret put RESEND_API_KEY         --env staging
+#          wrangler secret put RESEND_FROM_EMAIL      --env staging
+#          wrangler secret put ADMIN_SECRET           --env staging
+# ---------------------------------------------------------------------------
+[env.staging]
+name = "tri-sync-worker-staging"
+
+[[env.staging.kv_namespaces]]
+binding = "LICENSE_KV"
+id = "REPLACE_WITH_YOUR_STAGING_KV_NAMESPACE_ID"
+
+# ---------------------------------------------------------------------------
+# Production environment
+#
+# Deploy: wrangler deploy --env production
+# Secrets: wrangler secret put STRIPE_WEBHOOK_SECRET --env production
+#          wrangler secret put RESEND_API_KEY         --env production
+#          wrangler secret put RESEND_FROM_EMAIL      --env production
+#          wrangler secret put ADMIN_SECRET           --env production
+# ---------------------------------------------------------------------------
+[env.production]
+name = "tri-sync-worker"
+
+[[env.production.kv_namespaces]]
+binding = "LICENSE_KV"
+id = "REPLACE_WITH_YOUR_PRODUCTION_KV_NAMESPACE_ID"
