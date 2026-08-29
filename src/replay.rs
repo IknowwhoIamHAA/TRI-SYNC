@@ -59,6 +59,8 @@ impl ReplayEngine {
 
         // Fix 6: track the timestamp of the last TICK_SEAL to enforce monotonicity.
         let mut last_seal_timestamp_ms: Option<u64> = None;
+        // Track highest non-zero tick seen to detect tick regressions.
+        let mut max_tick_seen: u64 = 0;
 
         for event in events {
             if let Some(namespace) = &expected_namespace {
@@ -114,6 +116,18 @@ impl ReplayEngine {
                     ));
                 }
                 last_seal_timestamp_ms = Some(ts);
+            }
+
+            // Tick regression guard: a non-zero tick must not be lower than the
+            // highest non-zero tick previously seen in the log.
+            if event.tick > 0 {
+                if event.tick < max_tick_seen {
+                    return Err(format!(
+                        "TICK_REGRESSION: event at seq {} has tick {} < previous max tick {}",
+                        event.seq, event.tick, max_tick_seen
+                    ));
+                }
+                max_tick_seen = event.tick;
             }
 
             Self::apply_event(&mut state, event)?;
@@ -686,5 +700,97 @@ mod tests {
         let err =
             ReplayEngine::replay(&[write, compact]).expect_err("wrong snapshot digest should fail");
         assert!(err.contains("COMPACT_FAIL"), "got: {err}");
+    }
+
+    // -------------------------------------------------------------------------
+    // Tick regression guard conformance tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn rejects_tick_regression_across_events() {
+        let first = Event::state_write(
+            0,
+            10,
+            "tenant-a",
+            "tenant-a:x",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        let second = Event::state_write(
+            1,
+            5, // regresses: 5 < 10
+            "tenant-a",
+            "tenant-a:x",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("second");
+
+        let err =
+            ReplayEngine::replay(&[first, second]).expect_err("tick regression should be rejected");
+        assert!(err.contains("TICK_REGRESSION"), "got: {err}");
+    }
+
+    #[test]
+    fn allows_equal_tick_values() {
+        let first = Event::state_write(
+            0,
+            5,
+            "tenant-a",
+            "tenant-a:x",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        let second = Event::state_write(
+            1,
+            5, // equal tick is allowed
+            "tenant-a",
+            "tenant-a:y",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("second");
+
+        ReplayEngine::replay(&[first, second]).expect("equal ticks should be allowed");
+    }
+
+    #[test]
+    fn zero_tick_does_not_trigger_regression_guard() {
+        // tick=0 means "unspecified" and must never trigger TICK_REGRESSION.
+        let first = Event::state_write(
+            0,
+            10,
+            "tenant-a",
+            "tenant-a:x",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        let second = Event::state_write(
+            1,
+            0, // zero is exempt
+            "tenant-a",
+            "tenant-a:y",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("second");
+
+        ReplayEngine::replay(&[first, second])
+            .expect("zero tick after non-zero tick must not cause TICK_REGRESSION");
     }
 }

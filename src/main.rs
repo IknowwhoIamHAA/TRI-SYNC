@@ -81,6 +81,17 @@ enum Commands {
         #[arg(long)]
         log: PathBuf,
     },
+    /// Print a human-readable summary of every event in a log file.
+    Inspect {
+        #[arg(long)]
+        log: PathBuf,
+    },
+    /// Print a one-line status summary of a log file: event count, head digest,
+    /// sealed/unsealed, and whether replay passes.
+    Status {
+        #[arg(long)]
+        log: PathBuf,
+    },
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -238,6 +249,51 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Example { log } => {
             run_example(log)?;
+        }
+        Commands::Inspect { log } => {
+            let log = AppendOnlyEventLog::open(log);
+            let events = log.load()?;
+            if events.is_empty() {
+                println!("(empty log)");
+            } else {
+                println!(
+                    "{:<6} {:<16} {:<20} {:<32} digest",
+                    "seq", "type", "namespace", "key"
+                );
+                println!("{}", "-".repeat(100));
+                for event in &events {
+                    println!(
+                        "{:<6} {:<16} {:<20} {:<32} {}",
+                        event.seq,
+                        format!("{:?}", event.event_type),
+                        event.namespace,
+                        event.key.as_deref().unwrap_or("-"),
+                        &event.digest[..16],
+                    );
+                }
+                println!("{}", "-".repeat(100));
+                println!("total: {} events", events.len());
+            }
+        }
+        Commands::Status { log } => {
+            let log_path = log.clone();
+            let log = AppendOnlyEventLog::open(log);
+            let events = log.load()?;
+            let count = events.len();
+            let head_digest = events
+                .last()
+                .map(|e| e.digest.as_str())
+                .unwrap_or(ZERO_DIGEST_HEX);
+            let sealed = events
+                .last()
+                .map(|e| e.event_type == tri_sync::event::EventType::TickSeal)
+                .unwrap_or(false);
+            let replay_ok = ReplayEngine::replay(&events).is_ok();
+            println!("log={}", log_path.display());
+            println!("events={count}");
+            println!("head_digest={head_digest}");
+            println!("sealed={sealed}");
+            println!("replay_ok={replay_ok}");
         }
     }
 

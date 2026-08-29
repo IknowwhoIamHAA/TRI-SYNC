@@ -29,6 +29,29 @@ impl BsmValue {
     }
 }
 
+/// A single per-key difference produced by [`BinaryStateMap::diff`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StateDiff {
+    /// Key is present in the second map but not the first.
+    Added { key: String, value: BsmValue },
+    /// Key is present in the first map but not the second.
+    Removed { key: String, value: BsmValue },
+    /// Key is present in both maps but with different values.
+    Changed {
+        key: String,
+        from: BsmValue,
+        to: BsmValue,
+    },
+}
+
+impl StateDiff {
+    pub fn key(&self) -> &str {
+        match self {
+            Self::Added { key, .. } | Self::Removed { key, .. } | Self::Changed { key, .. } => key,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct BinaryStateMap {
     inner: BTreeMap<String, BsmValue>,
@@ -203,6 +226,45 @@ impl BinaryStateMap {
         let mut encoded = vec![value.type_tag()];
         encode_value_payload(value, &mut encoded)?;
         Ok(sha256_hex(&encoded))
+    }
+
+    /// Compare two snapshots and return per-key differences.
+    ///
+    /// Returns one [`StateDiff`] for every key that exists in `a` or `b` but
+    /// not both, or whose value differs between the two maps.  Keys that are
+    /// identical in both snapshots are omitted.
+    pub fn diff(a: &BinaryStateMap, b: &BinaryStateMap) -> Vec<StateDiff> {
+        let mut result = Vec::new();
+
+        // Keys only in `a` (removed) and keys in both (possibly changed).
+        for (key, val_a) in &a.inner {
+            match b.inner.get(key) {
+                None => result.push(StateDiff::Removed {
+                    key: key.clone(),
+                    value: val_a.clone(),
+                }),
+                Some(val_b) if val_b != val_a => result.push(StateDiff::Changed {
+                    key: key.clone(),
+                    from: val_a.clone(),
+                    to: val_b.clone(),
+                }),
+                _ => {}
+            }
+        }
+
+        // Keys only in `b` (added).
+        for (key, val_b) in &b.inner {
+            if !a.inner.contains_key(key) {
+                result.push(StateDiff::Added {
+                    key: key.clone(),
+                    value: val_b.clone(),
+                });
+            }
+        }
+
+        // Sort by key for deterministic output.
+        result.sort_by(|x, y| x.key().cmp(y.key()));
+        result
     }
 
     fn insert_checked(&mut self, key: String, value: BsmValue) -> Result<(), String> {
@@ -404,7 +466,7 @@ fn read_i64(bytes: &[u8], cursor: &mut usize) -> Result<i64, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BinaryStateMap, BsmValue, StateSnapshot};
+    use super::{BinaryStateMap, BsmValue, StateDiff, StateSnapshot};
 
     #[test]
     fn maintains_multi_tenant_ordering() {
@@ -1145,5 +1207,124 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // BinaryStateMap::diff() conformance tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn diff_empty_maps_is_empty() {
+        let a = BinaryStateMap::new();
+        let b = BinaryStateMap::new();
+        assert!(BinaryStateMap::diff(&a, &b).is_empty());
+    }
+
+    #[test]
+    fn diff_identical_maps_is_empty() {
+        let mut a = BinaryStateMap::new();
+        a.set("t", "t:x", BsmValue::Integer(1)).unwrap();
+        a.set("t", "t:y", BsmValue::Boolean(true)).unwrap();
+        let b = a.clone();
+        assert!(BinaryStateMap::diff(&a, &b).is_empty());
+    }
+
+    #[test]
+    fn diff_detects_added_key() {
+        let a = BinaryStateMap::new();
+        let mut b = BinaryStateMap::new();
+        b.set("t", "t:new", BsmValue::Integer(42)).unwrap();
+
+        let diffs = BinaryStateMap::diff(&a, &b);
+        assert_eq!(diffs.len(), 1);
+        assert!(matches!(
+            &diffs[0],
+            StateDiff::Added { key, value } if key == "t:new" && *value == BsmValue::Integer(42)
+        ));
+    }
+
+    #[test]
+    fn diff_detects_removed_key() {
+        let mut a = BinaryStateMap::new();
+        a.set("t", "t:gone", BsmValue::Null).unwrap();
+        let b = BinaryStateMap::new();
+
+        let diffs = BinaryStateMap::diff(&a, &b);
+        assert_eq!(diffs.len(), 1);
+        assert!(matches!(
+            &diffs[0],
+            StateDiff::Removed { key, value } if key == "t:gone" && *value == BsmValue::Null
+        ));
+    }
+
+    #[test]
+    fn diff_detects_changed_value() {
+        let mut a = BinaryStateMap::new();
+        a.set("t", "t:v", BsmValue::Integer(1)).unwrap();
+        let mut b = BinaryStateMap::new();
+        b.set("t", "t:v", BsmValue::Integer(2)).unwrap();
+
+        let diffs = BinaryStateMap::diff(&a, &b);
+        assert_eq!(diffs.len(), 1);
+        assert!(matches!(
+            &diffs[0],
+            StateDiff::Changed { key, from, to }
+                if key == "t:v"
+                && *from == BsmValue::Integer(1)
+                && *to == BsmValue::Integer(2)
+        ));
+    }
+
+    #[test]
+    fn diff_result_is_sorted_by_key() {
+        let mut a = BinaryStateMap::new();
+        a.set("t", "t:a", BsmValue::Integer(1)).unwrap();
+        a.set("t", "t:b", BsmValue::Integer(2)).unwrap();
+        a.set("t", "t:c", BsmValue::Integer(3)).unwrap();
+
+        let mut b = BinaryStateMap::new();
+        b.set("t", "t:a", BsmValue::Integer(9)).unwrap(); // changed
+        // t:b removed
+        b.set("t", "t:d", BsmValue::Integer(4)).unwrap(); // added
+
+        let diffs = BinaryStateMap::diff(&a, &b);
+        let keys: Vec<&str> = diffs.iter().map(|d| d.key()).collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted, "diff result must be sorted by key");
+    }
+
+    #[test]
+    fn diff_with_all_diff_types_simultaneously() {
+        let mut a = BinaryStateMap::new();
+        a.set("t", "t:keep", BsmValue::Boolean(true)).unwrap();
+        a.set("t", "t:change", BsmValue::Integer(1)).unwrap();
+        a.set("t", "t:remove", BsmValue::Null).unwrap();
+
+        let mut b = BinaryStateMap::new();
+        b.set("t", "t:keep", BsmValue::Boolean(true)).unwrap(); // unchanged
+        b.set("t", "t:change", BsmValue::Integer(99)).unwrap(); // changed
+        // t:remove → absent
+        b.set("t", "t:add", BsmValue::String("new".to_string()))
+            .unwrap(); // added
+
+        let diffs = BinaryStateMap::diff(&a, &b);
+        assert_eq!(diffs.len(), 3, "keep must be excluded, 3 diffs expected");
+        assert!(diffs.iter().all(|d| d.key() != "t:keep"));
+        assert!(
+            diffs
+                .iter()
+                .any(|d| matches!(d, StateDiff::Added { key, .. } if key == "t:add"))
+        );
+        assert!(
+            diffs
+                .iter()
+                .any(|d| matches!(d, StateDiff::Removed { key, .. } if key == "t:remove"))
+        );
+        assert!(
+            diffs
+                .iter()
+                .any(|d| matches!(d, StateDiff::Changed { key, .. } if key == "t:change"))
+        );
     }
 }

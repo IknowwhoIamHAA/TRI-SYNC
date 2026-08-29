@@ -2,11 +2,86 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] — v1.1.0
+
+> **Backward-compatible additions only.** The v1.0.0 wire protocol is unchanged.  
+> All new features are opt-in. No breaking changes.
+
+### Added
+
+#### License
+- Replaced Apache 2.0 `LICENSE` file with the correct TRI-SYNC commercial license notice.
+- Added `NOTICE` file attributing Apache 2.0 third-party Cargo dependencies.
+
+#### CLI
+- `inspect --log <path>` — Human-readable event log dump: prints each event's seq, type,
+  namespace, key, value, and digest in aligned columns. Useful for auditing and debugging.
+- `status --log <path>` — Single-line summary of a log: event count, head digest,
+  whether the log ends with a `TICK_SEAL`, and whether replay passes.
+
+#### Replay Guard
+- Tick regression detection across all event types. If a non-zero `tick` in any event is
+  strictly less than the highest non-zero `tick` seen so far, replay halts with
+  `TICK_REGRESSION`. This is an additional guard beyond the existing `TIMESTAMP_REGRESSION`
+  check on `TICK_SEAL` events.
+
+#### State Map
+- `BinaryStateMap::diff(a, b) -> Vec<StateDiff>` — structured comparison of two snapshots.
+  Returns one `StateDiff` per key that differs: `Added`, `Removed`, or `Changed { from, to }`.
+  Useful for audit tooling, snapshot promotion workflows, and change-verification pipelines.
+
+#### Documentation
+- Fixed stale test count in `CHANGELOG.md` and `README.md` (63 → 100).
+- Fixed stale wire-format description in `protocol.md` §2 and `invariants.md`
+  (`F64 big-endian` → correct typed encoding summary).
+- Removed orphan `src/cli/` and `src/workflow/` directories (never compiled, referenced
+  non-existent API methods).
+
+#### CI
+- Added Clippy job (enforces `deny(warnings)` with MSRV-aware lint checks).
+- Added MSRV job (pins `rust-version = "1.85"` in `Cargo.toml`; verified with
+  `incompatible_msrv` clippy lint).
+- Added multi-platform matrix: ubuntu-latest, macos-latest, windows-latest.
+- Added cross-language digest conformance job (Node.js TypeScript client vs. Rust).
+
+#### Tests
+- 37 new tests (74 → 100 total, all passing):
+  - 5 pinned BSM wire-format vectors (empty map, single Boolean, single Integer, §3.5
+    three-entry canonical vector, round-trip encode-decode-encode).
+  - 3 SHA-256 pinned vectors in `digest.rs` (NIST ABC, 448-bit, four-zero-bytes/empty BSM).
+  - 3 canonical JSON SHA-256 pinned vectors in `canonical_json.rs`.
+  - 26 comprehensive `state_map.rs` unit tests covering all 6 `BsmValue` variants,
+    `to_binary()` round-trips, `from_binary()` ordering/duplicate/truncation/trailing-byte
+    rejection, `root_digest_hex()` insertion-order independence and mutation sensitivity,
+    `to_canonical_json()` key order/no-whitespace/bytes-as-hex, and `value_digest_hex()`
+    determinism, cross-type distinctness, and pinned SHA-256 vector for `Integer(42)`.
+
+### Changed
+- `Cargo.toml`: added `rust-version = "1.85"` (MSRV pin).
+- `src/hex.rs`: replaced `usize::is_multiple_of(2)` (stabilized Rust 1.87) with
+  `% 2 != 0` (MSRV-safe).
+- `src/event.rs`: `#[allow(clippy::too_many_arguments)]` on `state_write` and `compact`
+  (deliberate high-arity constructors matching the protocol's event fields).
+- Various clippy auto-fixes: `needless_as_bytes`, `collapsible_if`.
+
+### Fixed
+- `README.md` + `docs/licensing.md`: corrected license key format from
+  `TRISYNC-XXXX-XXXX-XXXX` to `TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX` (5 occurrences).
+- `protocol.md`: replaced stale physics schema stub with the actual event schema.
+
+### Compatibility
+- Wire format: **unchanged**. All v1.0.0 encoded logs are fully replayable by v1.1.0.
+- `BinaryStateMap::from_binary` / `to_binary`: byte-identical to v1.0.0.
+- All existing CLI subcommands (`apply`, `delete`, `replay`, `verify`, `export`, `digest`,
+  `example`) are unchanged.
+
+---
+
 ## [1.0.0] - 2026-08-26 — **Protocol Frozen. Production-Ready.**
 
 > **This is the stable, commercially-licensed release of TRI-SYNC.**  
 > The v1.0.0 wire protocol is frozen. All future versions will be backward-compatible.  
-> 63 tests pass. CodeQL: 0 alerts. No TODOs or FIXMEs in protocol-critical code.
+> 100 tests pass. CodeQL: 0 alerts. No TODOs or FIXMEs in protocol-critical code.
 
 ### Added
 - Public API freeze declaration for TRI-SYNC Runtime v1.0.0.

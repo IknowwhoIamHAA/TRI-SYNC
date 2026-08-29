@@ -288,7 +288,7 @@ Customer activates:
 **v1.0.0 — Protocol frozen. Production-ready.**
 
 - ✅ Wire format frozen — no breaking changes after v1.0.0
-- ✅ 63 tests pass
+- ✅ 100 tests pass
 - ✅ CodeQL: 0 security alerts
 - ✅ No TODOs or FIXMEs in protocol-critical code
 - ✅ Cross-language determinism test vector pinned: `768e154f…`
