@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TRI-SYNC</title>
 <meta name="description" content="Deterministic, cryptographically verifiable state for AI workflows and regulated pipelines.">
-<script async src="https://js.stripe.com/v3/buy-button.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -64,6 +63,18 @@
   .feats li { font-size: .85rem; color: var(--muted); display: flex; gap: .5rem; }
   .feats li::before { content: '✓'; color: var(--green); font-weight: 700; flex-shrink: 0; }
   .btn-wrap { display: flex; justify-content: center; margin-top: auto; }
+  .buy-btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: .95rem;
+    padding: .75rem 2rem;
+    border-radius: 8px;
+    text-decoration: none;
+    transition: opacity .15s;
+  }
+  .buy-btn:hover { opacity: .85; }
 
   /* Validator */
   .validator {
@@ -134,10 +145,7 @@
       <li>Email support</li>
     </ul>
     <div class="btn-wrap">
-      <stripe-buy-button
-        buy-button-id="buy_btn_1U9DgQRz1VEWWj8vzBCWPRqO"
-        publishable-key="pk_live_51TTzZtRz1VEWWj8v3qEyZRuXRKeO1zsvo17ppEN3z83VjLQg1NYosXSugd44pocztEw2Ro3P7MY8pnTzqjJ2o69c00H9xrwnlh">
-      </stripe-buy-button>
+      <a class="buy-btn" href="https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05" target="_blank" rel="noopener">Get License →</a>
     </div>
   </div>
 
