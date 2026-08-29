@@ -38,23 +38,19 @@
   .hd h1 { font-size: clamp(2rem, 5vw, 3rem); font-weight: 800; letter-spacing: -.02em; }
   .hd p  { margin-top: .6rem; color: var(--muted); font-size: 1rem; max-width: 480px; }
 
-  /* Pricing cards */
+  /* Pricing card */
   .cards {
     display: flex;
-    gap: 1.5rem;
-    flex-wrap: wrap;
     justify-content: center;
     width: 100%;
-    max-width: 700px;
   }
   .card {
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 2rem 1.75rem;
-    flex: 1;
-    min-width: 260px;
-    max-width: 320px;
+    width: 100%;
+    max-width: 360px;
     display: flex;
     flex-direction: column;
     gap: 1rem;
@@ -127,26 +123,9 @@
 
 <div class="cards">
 
-  <div class="card">
-    <div class="tier">Developer</div>
-    <div class="price">Free <span>/ eval</span></div>
-    <div class="desc">Single developer, non-production evaluation.</div>
-    <ul class="feats">
-      <li>1 developer seat</li>
-      <li>All CLI features</li>
-      <li>Community support</li>
-    </ul>
-    <div class="btn-wrap">
-      <stripe-buy-button
-        buy-button-id="buy_btn_1U9DZzRz1VEWWj8vsCMqB9Hm"
-        publishable-key="pk_live_51TTzZtRz1VEWWj8v3qEyZRuXRKeO1zsvo17ppEN3z83VjLQg1NYosXSugd44pocztEw2Ro3P7MY8pnTzqjJ2o69c00H9xrwnlh">
-      </stripe-buy-button>
-    </div>
-  </div>
-
   <div class="card featured">
     <div class="tier">Team</div>
-    <div class="price">Contact <span>/ year</span></div>
+    <div class="price">$29 <span>/ month</span></div>
     <div class="desc">Up to 10 developers. Production included. Key delivered by email.</div>
     <ul class="feats">
       <li>Up to 10 seats</li>
