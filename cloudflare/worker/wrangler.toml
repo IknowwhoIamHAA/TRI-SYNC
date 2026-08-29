@@ -1,6 +1,6 @@
 name = "tri-sync-worker"
 main = "src/index.js"
-compatibility_date = "2024-04-10"
+compatibility_date = "2026-08-29"
 
 # ---------------------------------------------------------------------------
 # Top-level (dev / local preview) — uses placeholder KV ids.
@@ -16,14 +16,6 @@ id = "REPLACE_WITH_YOUR_PREVIEW_MARKETING_CONTACTS_KV_NAMESPACE_ID"
 
 # ---------------------------------------------------------------------------
 # Staging environment
-#
-# Deploy: wrangler deploy --env staging
-# Secrets: wrangler secret put STRIPE_WEBHOOK_SECRET --env staging
-#          wrangler secret put STRIPE_API_KEY         --env staging
-#          wrangler secret put RESEND_API_KEY         --env staging
-#          wrangler secret put RESEND_FROM_EMAIL      --env staging
-#          wrangler secret put ADMIN_SECRET           --env staging
-#          wrangler secret put MARKETING_API_KEY      --env staging
 # ---------------------------------------------------------------------------
 [env.staging]
 name = "tri-sync-worker-staging"
@@ -38,18 +30,11 @@ id = "REPLACE_WITH_YOUR_STAGING_MARKETING_CONTACTS_KV_NAMESPACE_ID"
 
 # ---------------------------------------------------------------------------
 # Production environment
-#
-# Deploy: wrangler deploy --env production
-# Secrets: wrangler secret put STRIPE_WEBHOOK_SECRET --env production
-#          wrangler secret put STRIPE_API_KEY         --env production
-#          wrangler secret put RESEND_API_KEY         --env production
-#          wrangler secret put RESEND_FROM_EMAIL      --env production
-#          wrangler secret put ADMIN_SECRET           --env production
-#          wrangler secret put MARKETING_API_KEY      --env production
 # ---------------------------------------------------------------------------
 [env.production]
 name = "trisync-license-worker"
 routes = [
+  { pattern = "api.trisync.dev/*",   zone_name = "trisync.dev" },
   { pattern = "trisync.dev/marketing/*", zone_name = "trisync.dev" },
   { pattern = "trisync.dev/health",      zone_name = "trisync.dev" },
   { pattern = "trisync.dev/validate",    zone_name = "trisync.dev" },
@@ -58,8 +43,9 @@ routes = [
 
 [[env.production.kv_namespaces]]
 binding = "ISSUED_KEYS"
-id = "REPLACE_WITH_YOUR_PRODUCTION_ISSUED_KEYS_KV_NAMESPACE_ID"
+id = "513255134bf44c74882832e17c6eed30"
 
 [[env.production.kv_namespaces]]
 binding = "MARKETING_CONTACTS"
-id = "REPLACE_WITH_YOUR_PRODUCTION_MARKETING_CONTACTS_KV_NAMESPACE_ID"
+id = "4e6e64d6c4ee413591a2911fc2f1e4b3"
+
