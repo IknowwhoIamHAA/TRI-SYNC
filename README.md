@@ -23,7 +23,7 @@ https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
 Once you have your key:
 
 ```bash
-export TRISYNC_LICENSE_KEY=TRISYNC-XXXX-XXXX-XXXX
+export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 ```
 
 ### 2 — Download or Build
@@ -45,7 +45,7 @@ cargo build --release
 ### 3 — Verify
 
 ```bash
-export TRISYNC_LICENSE_KEY=TRISYNC-XXXX-XXXX-XXXX
+export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 ./tri-sync digest --input "hello"
 # ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 ```

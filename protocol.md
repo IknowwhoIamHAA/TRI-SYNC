@@ -12,14 +12,30 @@ TRI-SYNC is a deterministic runtime protocol designed to guarantee reproducible 
 - **Deterministic Replay** — Identical input produces identical output across machines and environments.
 - **No Outbound Mutation** — Lens-only, observe-only runtime mode.
 
-## 3. Message Schema
-Each event ingested by TRI-SYNC follows this canonical structure:
+## 3. Event Schema
+
+Each event written to the TRI-SYNC append-only log follows this canonical structure:
+
+```json
 {
-"time": <f64>,
-"position": <f64>,
-"velocity": <f64>,
-"curvature": <f64>,
-"acceleration": <f64>,
-"stability": <f64>,
-"metadata": { ... }
+  "type":               "<STATE_WRITE | STATE_DELETE | STATE_BATCH | TICK_SEAL | COMPACT | PROTOCOL_ERROR>",
+  "seq":                <u64>,
+  "tick":               <u64>,
+  "namespace":          "<tenant-namespace>",
+  "key":                "<namespace:key>",
+  "value_type":         <u8>,
+  "value":              <json-value>,
+  "prev_value_digest":  "<64-char lowercase hex SHA-256>",
+  "idempotent":         <bool>,
+  "ops":                [ { "type": "...", "key": "...", ... } ],
+  "event_count":        <u32>,
+  "root_digest":        "<64-char lowercase hex SHA-256>",
+  "timestamp_ms":       <u64>,
+  "digest":             "<64-char lowercase hex SHA-256>",
+  "prev_digest":        "<64-char lowercase hex SHA-256>"
 }
+```
+
+Fields are omitted when not applicable to the event type (canonical JSON, no `null` padding).
+All digests are SHA-256 of the canonical JSON representation, encoded as lowercase hex.
+The full normative event specification is in [SPEC.md](SPEC.md).
