@@ -10,8 +10,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 #### License
-- Replaced Apache 2.0 `LICENSE` file with the correct TRI-SYNC commercial license notice.
-- Added `NOTICE` file attributing Apache 2.0 third-party Cargo dependencies.
+- Removed the `LICENSE` file (which had contained Apache 2.0 text) from the repository root.
+  `COMMERCIAL_LICENSE.md` is now the sole authoritative project license.
 
 #### CLI
 - `inspect --log <path>` — Human-readable event log dump: prints each event's seq, type,

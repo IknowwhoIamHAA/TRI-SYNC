@@ -14,4 +14,4 @@ dependency license information is available by running:
     cargo metadata --format-version 1 | jq '.packages[].license'
 
 The TRI-SYNC source code itself is NOT licensed under Apache 2.0.
-It is commercially licensed. See LICENSE and COMMERCIAL_LICENSE.md.
+It is commercially licensed. See COMMERCIAL_LICENSE.md.
