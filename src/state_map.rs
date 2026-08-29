@@ -133,11 +133,11 @@ impl BinaryStateMap {
         out.extend_from_slice(&(entries.len() as u32).to_be_bytes());
 
         for (key, value) in entries {
-            if key.as_bytes().len() > u16::MAX as usize {
+            if key.len() > u16::MAX as usize {
                 return Err("key too long for wire format".to_string());
             }
 
-            out.extend_from_slice(&(key.as_bytes().len() as u16).to_be_bytes());
+            out.extend_from_slice(&(key.len() as u16).to_be_bytes());
             out.extend_from_slice(key.as_bytes());
             out.push(value.type_tag());
             encode_value_payload(value, &mut out)?;
@@ -159,11 +159,10 @@ impl BinaryStateMap {
             let key = String::from_utf8(key_bytes.to_vec())
                 .map_err(|_| "key must be valid UTF-8".to_string())?;
 
-            if let Some(prev) = &previous_key {
-                if prev.as_bytes() >= key.as_bytes() {
+            if let Some(prev) = &previous_key
+                && prev.as_bytes() >= key.as_bytes() {
                     return Err("ORDER_VIOLATION: keys must be strictly increasing".to_string());
                 }
-            }
             previous_key = Some(key.clone());
 
             let type_tag = read_u8(bytes, &mut cursor)?;
@@ -231,7 +230,7 @@ impl BinaryStateMap {
 
 impl StateSnapshot {
     pub fn to_binary(&self) -> Result<Vec<u8>, String> {
-        if self.namespace.as_bytes().len() > u16::MAX as usize {
+        if self.namespace.len() > u16::MAX as usize {
             return Err("namespace too large".to_string());
         }
         for key in self.state.inner.keys() {
@@ -244,7 +243,7 @@ impl StateSnapshot {
         }
 
         let mut out = Vec::new();
-        out.extend_from_slice(&(self.namespace.as_bytes().len() as u16).to_be_bytes());
+        out.extend_from_slice(&(self.namespace.len() as u16).to_be_bytes());
         out.extend_from_slice(self.namespace.as_bytes());
         out.extend_from_slice(&self.tick.to_be_bytes());
         out.extend_from_slice(&self.root_digest);

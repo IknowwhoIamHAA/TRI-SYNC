@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
-use tri_sync::event::{Event, EventType, ZERO_DIGEST_HEX};
+use tri_sync::event::{Event, ZERO_DIGEST_HEX};
 use tri_sync::event_log::AppendOnlyEventLog;
 use tri_sync::license;
 use tri_sync::replay::ReplayEngine;

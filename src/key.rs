@@ -46,7 +46,7 @@ pub fn validate_key(namespace: &str, key: &str) -> Result<(), String> {
     if key.is_empty() {
         return Err("key must not be empty".to_string());
     }
-    if key.as_bytes().len() > 512 {
+    if key.len() > 512 {
         return Err("key must be <=512 bytes".to_string());
     }
     if key.as_bytes().contains(&0) {
