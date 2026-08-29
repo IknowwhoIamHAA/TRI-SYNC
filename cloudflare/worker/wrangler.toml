@@ -40,7 +40,11 @@ name = "trisync-license-worker"
 #   (proxied / orange-cloud)
 # Also update the Stripe webhook endpoint to https://api.trisync.dev/webhook.
 routes = [
-  { pattern = "api.trisync.dev/*", zone_name = "trisync.dev" },
+  { pattern = "api.trisync.dev/*",   zone_name = "trisync.dev" },
+  { pattern = "trisync.dev/marketing/*", zone_name = "trisync.dev" },
+  { pattern = "trisync.dev/health",      zone_name = "trisync.dev" },
+  { pattern = "trisync.dev/validate",    zone_name = "trisync.dev" },
+  { pattern = "trisync.dev/webhook",     zone_name = "trisync.dev" },
 ]
 
 [[env.production.kv_namespaces]]
