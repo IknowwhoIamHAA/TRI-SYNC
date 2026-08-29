@@ -36,7 +36,13 @@ id = "REPLACE_WITH_YOUR_STAGING_KV_NAMESPACE_ID"
 #          wrangler secret put ADMIN_SECRET           --env production
 # ---------------------------------------------------------------------------
 [env.production]
-name = "tri-sync-worker"
+name = "trisync-license-worker"
+routes = [
+  { pattern = "trisync.dev/marketing/*", zone_name = "trisync.dev" },
+  { pattern = "trisync.dev/health",      zone_name = "trisync.dev" },
+  { pattern = "trisync.dev/validate",    zone_name = "trisync.dev" },
+  { pattern = "trisync.dev/webhook",     zone_name = "trisync.dev" },
+]
 
 [[env.production.kv_namespaces]]
 binding = "LICENSE_KV"

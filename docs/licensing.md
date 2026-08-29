@@ -21,13 +21,13 @@ If the key is missing, empty, or invalid, `tri-sync` prints a clear error and ex
 
 ### Step 1 — Obtain a License Key
 
-Contact the TRI-SYNC team or visit:
+**Purchase a 1-month license key ($29/month):**
 
 ```
-https://github.com/IknowwhoIamHAA/TRI-SYNC
+https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
 ```
 
-Choose a license tier appropriate for your deployment (see tiers below).
+After completing the purchase, you will receive a license key by email.
 
 ### Step 2 — Install TRI-SYNC
 
@@ -94,7 +94,7 @@ For multi-node or containerized deployments, the recommended approach is to inje
 | **Enterprise** | Unlimited developers, production deployments, SLA support |
 | **OEM** | Redistribution rights, embedded use in third-party products |
 
-Contact [the TRI-SYNC team](https://github.com/IknowwhoIamHAA/TRI-SYNC) to discuss pricing and terms for your use case.
+Contact [the TRI-SYNC team](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) to discuss pricing and terms for your use case.
 
 ---
 
