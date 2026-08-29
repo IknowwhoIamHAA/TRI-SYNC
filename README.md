@@ -14,8 +14,10 @@ TRI‑SYNC is a portable, commercially-licensed Rust runtime that guarantees rep
 
 TRI-SYNC requires a commercial license for production use.
 
+**Purchase a 1-month license key ($29/month):**
+
 ```
-https://github.com/IknowwhoIamHAA/TRI-SYNC
+https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
 ```
 
 Once you have your key:
@@ -104,7 +106,7 @@ Exit code `0` means the log is valid. Exit code `1` means a protocol violation w
 
 | Step | Action |
 |---|---|
-| 1 | Pay → receive license key |
+| 1 | [Purchase a 1-month license key ($29/month)](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
 | 2 | `export TRISYNC_LICENSE_KEY=<your-key>` |
 | 3 | Run `tri-sync <command>` |
 
@@ -299,4 +301,4 @@ Customer activates:
 
 TRI-SYNC is commercially licensed. See [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for full terms.
 
-For licensing inquiries: https://github.com/IknowwhoIamHAA/TRI-SYNC
+For licensing inquiries: https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
