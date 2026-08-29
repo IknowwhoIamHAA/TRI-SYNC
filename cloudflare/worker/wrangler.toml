@@ -3,37 +3,49 @@ main = "src/index.js"
 compatibility_date = "2024-04-10"
 
 # ---------------------------------------------------------------------------
-# Top-level (dev / local preview) — uses placeholder KV id.
-# Override with a real preview namespace id for local `wrangler dev`.
+# Top-level (dev / local preview) — uses placeholder KV ids.
+# Override with real preview namespace ids for local `wrangler dev`.
 # ---------------------------------------------------------------------------
 [[kv_namespaces]]
-binding = "LICENSE_KV"
-id = "REPLACE_WITH_YOUR_PREVIEW_KV_NAMESPACE_ID"
+binding = "ISSUED_KEYS"
+id = "REPLACE_WITH_YOUR_PREVIEW_ISSUED_KEYS_KV_NAMESPACE_ID"
+
+[[kv_namespaces]]
+binding = "MARKETING_CONTACTS"
+id = "REPLACE_WITH_YOUR_PREVIEW_MARKETING_CONTACTS_KV_NAMESPACE_ID"
 
 # ---------------------------------------------------------------------------
 # Staging environment
 #
 # Deploy: wrangler deploy --env staging
 # Secrets: wrangler secret put STRIPE_WEBHOOK_SECRET --env staging
+#          wrangler secret put STRIPE_API_KEY         --env staging
 #          wrangler secret put RESEND_API_KEY         --env staging
 #          wrangler secret put RESEND_FROM_EMAIL      --env staging
 #          wrangler secret put ADMIN_SECRET           --env staging
+#          wrangler secret put MARKETING_API_KEY      --env staging
 # ---------------------------------------------------------------------------
 [env.staging]
 name = "tri-sync-worker-staging"
 
 [[env.staging.kv_namespaces]]
-binding = "LICENSE_KV"
-id = "REPLACE_WITH_YOUR_STAGING_KV_NAMESPACE_ID"
+binding = "ISSUED_KEYS"
+id = "REPLACE_WITH_YOUR_STAGING_ISSUED_KEYS_KV_NAMESPACE_ID"
+
+[[env.staging.kv_namespaces]]
+binding = "MARKETING_CONTACTS"
+id = "REPLACE_WITH_YOUR_STAGING_MARKETING_CONTACTS_KV_NAMESPACE_ID"
 
 # ---------------------------------------------------------------------------
 # Production environment
 #
 # Deploy: wrangler deploy --env production
 # Secrets: wrangler secret put STRIPE_WEBHOOK_SECRET --env production
+#          wrangler secret put STRIPE_API_KEY         --env production
 #          wrangler secret put RESEND_API_KEY         --env production
 #          wrangler secret put RESEND_FROM_EMAIL      --env production
 #          wrangler secret put ADMIN_SECRET           --env production
+#          wrangler secret put MARKETING_API_KEY      --env production
 # ---------------------------------------------------------------------------
 [env.production]
 name = "trisync-license-worker"
@@ -45,5 +57,9 @@ routes = [
 ]
 
 [[env.production.kv_namespaces]]
-binding = "LICENSE_KV"
-id = "REPLACE_WITH_YOUR_PRODUCTION_KV_NAMESPACE_ID"
+binding = "ISSUED_KEYS"
+id = "REPLACE_WITH_YOUR_PRODUCTION_ISSUED_KEYS_KV_NAMESPACE_ID"
+
+[[env.production.kv_namespaces]]
+binding = "MARKETING_CONTACTS"
+id = "REPLACE_WITH_YOUR_PRODUCTION_MARKETING_CONTACTS_KV_NAMESPACE_ID"
