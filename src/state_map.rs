@@ -614,4 +614,150 @@ mod tests {
             "state must be unchanged after rollback"
         );
     }
+
+    // ---------------------------------------------------------------------------
+    // Pinned BSM wire-format vector tests
+    //
+    // These vectors pin the exact wire encoding for each supported value type.
+    // Any change to the BSM serialisation format will break these tests — that is
+    // intentional: the wire format is frozen at v1.0.0.
+    // ---------------------------------------------------------------------------
+
+    /// Empty BSM: entry_count(u32 BE) = 0x00000000.
+    #[test]
+    fn wire_vector_empty_bsm_is_four_zero_bytes() {
+        let state = BinaryStateMap::new();
+        let bytes = state.to_binary().expect("to_binary");
+        assert_eq!(bytes, [0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            crate::digest::sha256_hex(&bytes),
+            "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+        );
+    }
+
+    /// Boolean(true) entry.
+    /// Wire: entry_count=1 | key_len=6 | "a:flag" | type=0x01 | 0x01
+    #[test]
+    fn wire_vector_single_boolean_true() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("a", "a:flag", BsmValue::Boolean(true))
+            .expect("set");
+        let bytes = state.to_binary().expect("to_binary");
+        // entry_count (4B) + key_len (2B) + key (6B) + type (1B) + bool (1B) = 14 bytes
+        assert_eq!(bytes.len(), 14);
+        #[rustfmt::skip]
+        let expected: &[u8] = &[
+            0x00, 0x00, 0x00, 0x01,                   // entry_count = 1
+            0x00, 0x06,                               // key_len = 6
+            b'a', b':', b'f', b'l', b'a', b'g',      // key = "a:flag"
+            0x01,                                     // type = BOOLEAN
+            0x01,                                     // value = true
+        ];
+        assert_eq!(bytes, expected);
+        assert_eq!(
+            crate::digest::sha256_hex(&bytes),
+            "897249c82a218bc108e20736341dafa170deff8045951ac76deb26d9e3a489b9"
+        );
+    }
+
+    /// Integer(42) entry.
+    /// Wire: entry_count=1 | key_len=9 | "a:counter" | type=0x02 | i64 BE
+    #[test]
+    fn wire_vector_single_integer_42() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("a", "a:counter", BsmValue::Integer(42))
+            .expect("set");
+        let bytes = state.to_binary().expect("to_binary");
+        // entry_count (4B) + key_len (2B) + key (9B) + type (1B) + i64 (8B) = 24 bytes
+        assert_eq!(bytes.len(), 24);
+        #[rustfmt::skip]
+        let expected: &[u8] = &[
+            0x00, 0x00, 0x00, 0x01,                                   // entry_count = 1
+            0x00, 0x09,                                               // key_len = 9
+            b'a', b':', b'c', b'o', b'u', b'n', b't', b'e', b'r',   // "a:counter"
+            0x02,                                                     // type = INTEGER
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a,          // 42 as i64 BE
+        ];
+        assert_eq!(bytes, expected);
+        assert_eq!(
+            crate::digest::sha256_hex(&bytes),
+            "6ed61f752883704fde3678364580d328da813532682dd589ab8e1c65b997c2d6"
+        );
+    }
+
+    /// §3.5 three-entry conformance vector.
+    /// Keys in wire order (UTF-8 lex): counter < flag < ratio.
+    /// Root digest MUST equal the pinned cross-language vector.
+    #[test]
+    fn wire_vector_section_3_5_three_entries_exact_bytes() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:counter", BsmValue::Integer(42))
+            .expect("set counter");
+        state
+            .set(
+                "tenant-a",
+                "tenant-a:ratio",
+                BsmValue::Decimal("3.14".to_string()),
+            )
+            .expect("set ratio");
+        state
+            .set("tenant-a", "tenant-a:flag", BsmValue::Boolean(true))
+            .expect("set flag");
+
+        let bytes = state.to_binary().expect("to_binary");
+        assert_eq!(bytes.len(), 73, "wire length must be exactly 73 bytes");
+
+        // Pin the exact wire hex so any encoding change is immediately visible.
+        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex,
+            concat!(
+                "00000003",                               // entry_count = 3
+                "0010", "74656e616e742d613a636f756e746572", // "tenant-a:counter" (16B)
+                "02", "000000000000002a",                  // INTEGER 42
+                "000d", "74656e616e742d613a666c6167",       // "tenant-a:flag" (13B)
+                "01", "01",                               // BOOLEAN true
+                "000e", "74656e616e742d613a726174696f",    // "tenant-a:ratio" (14B)
+                "03", "00000004", "332e3134",              // DECIMAL "3.14"
+            )
+        );
+
+        assert_eq!(
+            state.root_digest_hex().expect("root digest"),
+            "768e154f65fb12f4419452ac76223006bf9097187294b0d9cec1260e22c664d3"
+        );
+    }
+
+    /// Round-trip: encode → decode → encode produces identical bytes.
+    #[test]
+    fn wire_vector_round_trip_encode_decode_encode() {
+        let mut state = BinaryStateMap::new();
+        state.set("t", "t:a", BsmValue::Integer(1)).expect("set a");
+        state
+            .set("t", "t:b", BsmValue::Boolean(false))
+            .expect("set b");
+        state
+            .set("t", "t:c", BsmValue::Decimal("9.99".to_string()))
+            .expect("set c");
+        state
+            .set("t", "t:d", BsmValue::String("hello".to_string()))
+            .expect("set d");
+        state
+            .set("t", "t:e", BsmValue::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]))
+            .expect("set e");
+        state.set("t", "t:f", BsmValue::Null).expect("set f");
+
+        let bytes1 = state.to_binary().expect("encode");
+        let decoded = BinaryStateMap::from_binary(&bytes1).expect("decode");
+        let bytes2 = decoded.to_binary().expect("re-encode");
+        assert_eq!(bytes1, bytes2, "round-trip must be byte-identical");
+        assert_eq!(
+            state.root_digest_hex().expect("digest1"),
+            decoded.root_digest_hex().expect("digest2"),
+            "root digest must be identical after round-trip"
+        );
+    }
 }
