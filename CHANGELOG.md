@@ -45,16 +45,10 @@ All notable changes to this project will be documented in this file.
 - Added cross-language digest conformance job (Node.js TypeScript client vs. Rust).
 
 #### Tests
-- 37 new tests (74 → 100 total, all passing):
-  - 5 pinned BSM wire-format vectors (empty map, single Boolean, single Integer, §3.5
-    three-entry canonical vector, round-trip encode-decode-encode).
-  - 3 SHA-256 pinned vectors in `digest.rs` (NIST ABC, 448-bit, four-zero-bytes/empty BSM).
-  - 3 canonical JSON SHA-256 pinned vectors in `canonical_json.rs`.
-  - 26 comprehensive `state_map.rs` unit tests covering all 6 `BsmValue` variants,
-    `to_binary()` round-trips, `from_binary()` ordering/duplicate/truncation/trailing-byte
-    rejection, `root_digest_hex()` insertion-order independence and mutation sensitivity,
-    `to_canonical_json()` key order/no-whitespace/bytes-as-hex, and `value_digest_hex()`
-    determinism, cross-type distinctness, and pinned SHA-256 vector for `Integer(42)`.
+- 37 new tests covering wire vectors + BsmValue variants + ordering violations + digest stability
+  raised the count from **74 → 100**.
+- 10 additional conformance tests for v1.1.0 features: 7 for `BinaryStateMap::diff` and 3 for
+  the tick regression guard, raising the total to **110 tests**.
 
 ### Changed
 - `Cargo.toml`: added `rust-version = "1.85"` (MSRV pin).

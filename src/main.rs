@@ -251,8 +251,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             run_example(log)?;
         }
         Commands::Inspect { log } => {
-            let log = AppendOnlyEventLog::open(log);
-            let events = log.load()?;
+            let event_log = AppendOnlyEventLog::open(log);
+            let events = event_log.load()?;
             if events.is_empty() {
                 println!("(empty log)");
             } else {
@@ -268,7 +268,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         format!("{:?}", event.event_type),
                         event.namespace,
                         event.key.as_deref().unwrap_or("-"),
-                        &event.digest[..16],
+                        event.digest.get(..16).unwrap_or(&event.digest),
                     );
                 }
                 println!("{}", "-".repeat(100));
@@ -277,8 +277,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Status { log } => {
             let log_path = log.clone();
-            let log = AppendOnlyEventLog::open(log);
-            let events = log.load()?;
+            let event_log = AppendOnlyEventLog::open(log);
+            let events = event_log.load()?;
             let count = events.len();
             let head_digest = events
                 .last()
