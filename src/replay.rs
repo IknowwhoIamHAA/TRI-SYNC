@@ -106,12 +106,13 @@ impl ReplayEngine {
                     format!("TICK_SEAL missing timestamp_ms at seq {}", event.seq)
                 })?;
                 if let Some(prev_ts) = last_seal_timestamp_ms
-                    && ts < prev_ts {
-                        return Err(format!(
-                            "TIMESTAMP_REGRESSION: TICK_SEAL at seq {} has timestamp {ts} < previous {prev_ts}",
-                            event.seq
-                        ));
-                    }
+                    && ts < prev_ts
+                {
+                    return Err(format!(
+                        "TIMESTAMP_REGRESSION: TICK_SEAL at seq {} has timestamp {ts} < previous {prev_ts}",
+                        event.seq
+                    ));
+                }
                 last_seal_timestamp_ms = Some(ts);
             }
 

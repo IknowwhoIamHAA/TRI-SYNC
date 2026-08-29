@@ -160,9 +160,10 @@ impl BinaryStateMap {
                 .map_err(|_| "key must be valid UTF-8".to_string())?;
 
             if let Some(prev) = &previous_key
-                && prev.as_bytes() >= key.as_bytes() {
-                    return Err("ORDER_VIOLATION: keys must be strictly increasing".to_string());
-                }
+                && prev.as_bytes() >= key.as_bytes()
+            {
+                return Err("ORDER_VIOLATION: keys must be strictly increasing".to_string());
+            }
             previous_key = Some(key.clone());
 
             let type_tag = read_u8(bytes, &mut cursor)?;
@@ -715,13 +716,20 @@ mod tests {
         assert_eq!(
             hex,
             concat!(
-                "00000003",                               // entry_count = 3
-                "0010", "74656e616e742d613a636f756e746572", // "tenant-a:counter" (16B)
-                "02", "000000000000002a",                  // INTEGER 42
-                "000d", "74656e616e742d613a666c6167",       // "tenant-a:flag" (13B)
-                "01", "01",                               // BOOLEAN true
-                "000e", "74656e616e742d613a726174696f",    // "tenant-a:ratio" (14B)
-                "03", "00000004", "332e3134",              // DECIMAL "3.14"
+                "00000003", // entry_count = 3
+                "0010",
+                "74656e616e742d613a636f756e746572", // "tenant-a:counter" (16B)
+                "02",
+                "000000000000002a", // INTEGER 42
+                "000d",
+                "74656e616e742d613a666c6167", // "tenant-a:flag" (13B)
+                "01",
+                "01", // BOOLEAN true
+                "000e",
+                "74656e616e742d613a726174696f", // "tenant-a:ratio" (14B)
+                "03",
+                "00000004",
+                "332e3134", // DECIMAL "3.14"
             )
         );
 
@@ -759,5 +767,383 @@ mod tests {
             decoded.root_digest_hex().expect("digest2"),
             "root digest must be identical after round-trip"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // to_binary() round-trip — every BsmValue variant individually
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn to_binary_round_trip_boolean_false() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("t", "t:v", BsmValue::Boolean(false))
+            .expect("set");
+        let encoded = state.to_binary().expect("encode");
+        let decoded = BinaryStateMap::from_binary(&encoded).expect("decode");
+        assert_eq!(decoded.get("t:v"), Some(&BsmValue::Boolean(false)));
+    }
+
+    #[test]
+    fn to_binary_round_trip_integer_negative() {
+        let mut state = BinaryStateMap::new();
+        state.set("t", "t:v", BsmValue::Integer(-1)).expect("set");
+        let encoded = state.to_binary().expect("encode");
+        let decoded = BinaryStateMap::from_binary(&encoded).expect("decode");
+        assert_eq!(decoded.get("t:v"), Some(&BsmValue::Integer(-1)));
+    }
+
+    #[test]
+    fn to_binary_round_trip_integer_min_max() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("t", "t:min", BsmValue::Integer(i64::MIN))
+            .expect("set min");
+        state
+            .set("t", "t:max", BsmValue::Integer(i64::MAX))
+            .expect("set max");
+        let encoded = state.to_binary().expect("encode");
+        let decoded = BinaryStateMap::from_binary(&encoded).expect("decode");
+        assert_eq!(decoded.get("t:min"), Some(&BsmValue::Integer(i64::MIN)));
+        assert_eq!(decoded.get("t:max"), Some(&BsmValue::Integer(i64::MAX)));
+    }
+
+    #[test]
+    fn to_binary_round_trip_decimal() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("t", "t:v", BsmValue::Decimal("0.0000001".to_string()))
+            .expect("set");
+        let encoded = state.to_binary().expect("encode");
+        let decoded = BinaryStateMap::from_binary(&encoded).expect("decode");
+        assert_eq!(
+            decoded.get("t:v"),
+            Some(&BsmValue::Decimal("0.0000001".to_string()))
+        );
+    }
+
+    #[test]
+    fn to_binary_round_trip_string() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set(
+                "t",
+                "t:v",
+                BsmValue::String("hello, 世界 \u{0000}".to_string()),
+            )
+            .expect("set");
+        let encoded = state.to_binary().expect("encode");
+        let decoded = BinaryStateMap::from_binary(&encoded).expect("decode");
+        assert_eq!(
+            decoded.get("t:v"),
+            Some(&BsmValue::String("hello, 世界 \u{0000}".to_string()))
+        );
+    }
+
+    #[test]
+    fn to_binary_round_trip_bytes() {
+        let payload: Vec<u8> = (0u8..=255).collect();
+        let mut state = BinaryStateMap::new();
+        state
+            .set("t", "t:v", BsmValue::Bytes(payload.clone()))
+            .expect("set");
+        let encoded = state.to_binary().expect("encode");
+        let decoded = BinaryStateMap::from_binary(&encoded).expect("decode");
+        assert_eq!(decoded.get("t:v"), Some(&BsmValue::Bytes(payload)));
+    }
+
+    #[test]
+    fn to_binary_round_trip_null() {
+        let mut state = BinaryStateMap::new();
+        state.set("t", "t:v", BsmValue::Null).expect("set");
+        let encoded = state.to_binary().expect("encode");
+        let decoded = BinaryStateMap::from_binary(&encoded).expect("decode");
+        assert_eq!(decoded.get("t:v"), Some(&BsmValue::Null));
+    }
+
+    // ---------------------------------------------------------------------------
+    // from_binary() ordering violation rejection
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn from_binary_rejects_out_of_order_keys() {
+        // Manually craft bytes with keys in reverse order: "t:b" before "t:a"
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&2u32.to_be_bytes()); // entry_count = 2
+        // First entry: "t:b" = Null
+        let k1 = b"t:b";
+        bytes.extend_from_slice(&(k1.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(k1);
+        bytes.push(0x06); // Null
+        // Second entry: "t:a" = Null (out of order)
+        let k2 = b"t:a";
+        bytes.extend_from_slice(&(k2.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(k2);
+        bytes.push(0x06); // Null
+
+        let err = BinaryStateMap::from_binary(&bytes).expect_err("out-of-order should fail");
+        assert!(
+            err.contains("ORDER_VIOLATION"),
+            "expected ORDER_VIOLATION, got: {err}"
+        );
+    }
+
+    #[test]
+    fn from_binary_rejects_duplicate_keys() {
+        // Craft bytes with two identical keys (same key twice — still "ordered" but duplicate)
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&2u32.to_be_bytes());
+        let k = b"t:a";
+        for _ in 0..2 {
+            bytes.extend_from_slice(&(k.len() as u16).to_be_bytes());
+            bytes.extend_from_slice(k);
+            bytes.push(0x06); // Null
+        }
+        let err = BinaryStateMap::from_binary(&bytes).expect_err("duplicate key should fail");
+        assert!(
+            err.contains("ORDER_VIOLATION"),
+            "expected ORDER_VIOLATION, got: {err}"
+        );
+    }
+
+    #[test]
+    fn from_binary_rejects_truncated_input() {
+        let mut state = BinaryStateMap::new();
+        state.set("t", "t:v", BsmValue::Integer(42)).expect("set");
+        let mut bytes = state.to_binary().expect("encode");
+        bytes.pop(); // remove last byte
+        BinaryStateMap::from_binary(&bytes).expect_err("truncated input should fail");
+    }
+
+    #[test]
+    fn from_binary_rejects_trailing_bytes() {
+        let mut state = BinaryStateMap::new();
+        state.set("t", "t:v", BsmValue::Integer(1)).expect("set");
+        let mut bytes = state.to_binary().expect("encode");
+        bytes.push(0xff); // extra byte
+        let err = BinaryStateMap::from_binary(&bytes).expect_err("trailing bytes should fail");
+        assert!(
+            err.contains("trailing"),
+            "expected trailing bytes error, got: {err}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // root_digest_hex() stability
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn root_digest_hex_is_stable_regardless_of_insertion_order() {
+        // Insert in one order
+        let mut s1 = BinaryStateMap::new();
+        s1.set("t", "t:a", BsmValue::Integer(1)).expect("set a");
+        s1.set("t", "t:b", BsmValue::Boolean(true)).expect("set b");
+        s1.set("t", "t:c", BsmValue::Null).expect("set c");
+
+        // Insert in reverse order
+        let mut s2 = BinaryStateMap::new();
+        s2.set("t", "t:c", BsmValue::Null).expect("set c");
+        s2.set("t", "t:b", BsmValue::Boolean(true)).expect("set b");
+        s2.set("t", "t:a", BsmValue::Integer(1)).expect("set a");
+
+        assert_eq!(
+            s1.root_digest_hex().expect("s1 digest"),
+            s2.root_digest_hex().expect("s2 digest"),
+            "root digest must be independent of insertion order"
+        );
+    }
+
+    #[test]
+    fn root_digest_hex_changes_when_value_changes() {
+        let mut s = BinaryStateMap::new();
+        s.set("t", "t:v", BsmValue::Integer(1)).expect("set");
+        let d1 = s.root_digest_hex().expect("digest1");
+
+        s.set("t", "t:v", BsmValue::Integer(2)).expect("update");
+        let d2 = s.root_digest_hex().expect("digest2");
+
+        assert_ne!(d1, d2, "digest must change when a value changes");
+    }
+
+    #[test]
+    fn root_digest_hex_changes_when_key_added_or_removed() {
+        let mut s = BinaryStateMap::new();
+        s.set("t", "t:a", BsmValue::Integer(1)).expect("set a");
+        let d1 = s.root_digest_hex().expect("d1");
+
+        s.set("t", "t:b", BsmValue::Integer(2)).expect("set b");
+        let d2 = s.root_digest_hex().expect("d2");
+        assert_ne!(d1, d2, "digest must change when a key is added");
+
+        s.delete("t", "t:b").expect("delete b");
+        let d3 = s.root_digest_hex().expect("d3");
+        assert_eq!(d1, d3, "digest must return to original after key removed");
+    }
+
+    // ---------------------------------------------------------------------------
+    // to_canonical_json() canonicalization — all types
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn to_canonical_json_all_value_types() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("t", "t:bool", BsmValue::Boolean(true))
+            .expect("set bool");
+        state
+            .set("t", "t:dec", BsmValue::Decimal("1.5".to_string()))
+            .expect("set dec");
+        state
+            .set("t", "t:int", BsmValue::Integer(99))
+            .expect("set int");
+        state.set("t", "t:null", BsmValue::Null).expect("set null");
+        state
+            .set("t", "t:str", BsmValue::String("hi".to_string()))
+            .expect("set str");
+
+        let json = state.to_canonical_json().expect("canonical json");
+        // Keys must be sorted: bool < dec < int < null < str
+        assert!(
+            json.contains(r#""t:bool":true"#),
+            "bool should be true: {json}"
+        );
+        assert!(
+            json.contains(r#""t:dec":"1.5""#),
+            "decimal should be string: {json}"
+        );
+        assert!(
+            json.contains(r#""t:int":99"#),
+            "int should be number: {json}"
+        );
+        assert!(
+            json.contains(r#""t:null":null"#),
+            "null should be null: {json}"
+        );
+        assert!(json.contains(r#""t:str":"hi""#), "string: {json}");
+        // Verify full sorted key order
+        let bool_pos = json.find("t:bool").expect("bool pos");
+        let dec_pos = json.find("t:dec").expect("dec pos");
+        let int_pos = json.find("t:int").expect("int pos");
+        let null_pos = json.find("t:null").expect("null pos");
+        let str_pos = json.find("t:str").expect("str pos");
+        assert!(
+            bool_pos < dec_pos && dec_pos < int_pos && int_pos < null_pos && null_pos < str_pos,
+            "keys must be in UTF-8 lexicographic order: {json}"
+        );
+    }
+
+    #[test]
+    fn to_canonical_json_bytes_encoded_as_hex() {
+        let mut state = BinaryStateMap::new();
+        state
+            .set("t", "t:v", BsmValue::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]))
+            .expect("set");
+        let json = state.to_canonical_json().expect("json");
+        assert!(
+            json.contains("deadbeef"),
+            "bytes should be hex-encoded in canonical JSON: {json}"
+        );
+    }
+
+    #[test]
+    fn to_canonical_json_no_whitespace() {
+        let mut state = BinaryStateMap::new();
+        state.set("t", "t:a", BsmValue::Integer(1)).expect("set a");
+        state.set("t", "t:b", BsmValue::Integer(2)).expect("set b");
+        let json = state.to_canonical_json().expect("json");
+        assert!(
+            !json.contains(' ') && !json.contains('\n') && !json.contains('\t'),
+            "canonical JSON must contain no whitespace: {json}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // value_digest_hex() correctness — all six variants
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn value_digest_hex_boolean_true_is_deterministic() {
+        let d1 = BinaryStateMap::value_digest_hex(&BsmValue::Boolean(true)).expect("d1");
+        let d2 = BinaryStateMap::value_digest_hex(&BsmValue::Boolean(true)).expect("d2");
+        assert_eq!(d1, d2);
+        assert_eq!(d1.len(), 64, "digest must be 64 hex chars");
+    }
+
+    #[test]
+    fn value_digest_hex_boolean_true_differs_from_false() {
+        let dt = BinaryStateMap::value_digest_hex(&BsmValue::Boolean(true)).expect("true");
+        let df = BinaryStateMap::value_digest_hex(&BsmValue::Boolean(false)).expect("false");
+        assert_ne!(dt, df);
+    }
+
+    #[test]
+    fn value_digest_hex_integer_is_deterministic() {
+        let d = BinaryStateMap::value_digest_hex(&BsmValue::Integer(42)).expect("d");
+        assert_eq!(d.len(), 64);
+        // SHA-256(type_tag=0x02 || i64_BE(42))
+        // bytes: [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a]
+        let expected =
+            crate::digest::sha256_hex(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a]);
+        assert_eq!(d, expected);
+    }
+
+    #[test]
+    fn value_digest_hex_decimal_is_deterministic() {
+        let d =
+            BinaryStateMap::value_digest_hex(&BsmValue::Decimal("3.14".to_string())).expect("d");
+        assert_eq!(d.len(), 64);
+        assert_eq!(
+            d,
+            BinaryStateMap::value_digest_hex(&BsmValue::Decimal("3.14".to_string())).expect("d2")
+        );
+    }
+
+    #[test]
+    fn value_digest_hex_decimal_rejects_non_canonical() {
+        BinaryStateMap::value_digest_hex(&BsmValue::Decimal("001.0".to_string()))
+            .expect_err("non-canonical decimal must fail");
+    }
+
+    #[test]
+    fn value_digest_hex_string_is_deterministic() {
+        let d =
+            BinaryStateMap::value_digest_hex(&BsmValue::String("hello".to_string())).expect("d");
+        assert_eq!(d.len(), 64);
+    }
+
+    #[test]
+    fn value_digest_hex_bytes_is_deterministic() {
+        let d = BinaryStateMap::value_digest_hex(&BsmValue::Bytes(vec![1, 2, 3])).expect("d");
+        assert_eq!(d.len(), 64);
+    }
+
+    #[test]
+    fn value_digest_hex_null_is_deterministic() {
+        let d1 = BinaryStateMap::value_digest_hex(&BsmValue::Null).expect("d1");
+        let d2 = BinaryStateMap::value_digest_hex(&BsmValue::Null).expect("d2");
+        assert_eq!(d1, d2);
+        assert_eq!(d1.len(), 64);
+    }
+
+    #[test]
+    fn value_digest_hex_all_types_are_distinct() {
+        let digests = [
+            BinaryStateMap::value_digest_hex(&BsmValue::Boolean(true)).unwrap(),
+            BinaryStateMap::value_digest_hex(&BsmValue::Boolean(false)).unwrap(),
+            BinaryStateMap::value_digest_hex(&BsmValue::Integer(0)).unwrap(),
+            BinaryStateMap::value_digest_hex(&BsmValue::Decimal("0".to_string())).unwrap(),
+            BinaryStateMap::value_digest_hex(&BsmValue::String(String::new())).unwrap(),
+            BinaryStateMap::value_digest_hex(&BsmValue::Bytes(vec![])).unwrap(),
+            BinaryStateMap::value_digest_hex(&BsmValue::Null).unwrap(),
+        ];
+        // Each variant has a different type tag byte, so all digests must be distinct.
+        for i in 0..digests.len() {
+            for j in (i + 1)..digests.len() {
+                assert_ne!(
+                    digests[i], digests[j],
+                    "variants {i} and {j} must produce different digests"
+                );
+            }
+        }
     }
 }
