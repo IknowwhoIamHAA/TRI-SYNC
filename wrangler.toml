@@ -2,6 +2,7 @@ name = "trisync-license-worker"
 main = "cloudflare/worker/src/index.js"
 compatibility_date = "2026-08-29"
 
+# KV namespaces (production IDs — used when deploying from repo root)
 [[kv_namespaces]]
 binding = "ISSUED_KEYS"
 id = "513255134bf44c74882832e17c6eed30"
@@ -9,11 +10,3 @@ id = "513255134bf44c74882832e17c6eed30"
 [[kv_namespaces]]
 binding = "MARKETING_CONTACTS"
 id = "4e6e64d6c4ee413591a2911fc2f1e4b3"
-
-routes = [
-  { pattern = "api.trisync.dev/*",       zone_name = "trisync.dev" },
-  { pattern = "trisync.dev/marketing/*", zone_name = "trisync.dev" },
-  { pattern = "trisync.dev/health",      zone_name = "trisync.dev" },
-  { pattern = "trisync.dev/validate",    zone_name = "trisync.dev" },
-  { pattern = "trisync.dev/webhook",     zone_name = "trisync.dev" },
-]
