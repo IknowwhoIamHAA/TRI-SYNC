@@ -9,7 +9,7 @@ TRI-SYNC is commercially licensed software. Use in production requires a valid l
 TRI-SYNC uses a **key-based activation model**:
 
 1. **Pay** — purchase a commercial license (see below).
-2. **Receive key** — you receive a license key string (e.g., `TRISYNC-XXXX-XXXX-XXXX`).
+2. **Receive key** — you receive a license key string (e.g., `TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX`).
 3. **Set environment variable** — export your key before running any `tri-sync` command.
 4. **Use TRI-SYNC** — run normally in production.
 
@@ -48,7 +48,7 @@ cargo build --release
 ### Step 3 — Set Your License Key
 
 ```bash
-export TRISYNC_LICENSE_KEY=TRISYNC-XXXX-XXXX-XXXX
+export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 ```
 
 For persistent activation, add the export to your shell profile (`~/.bashrc`, `~/.zshrc`) or your service's environment configuration.
@@ -78,7 +78,7 @@ The key-store file is a plain text file with one key per line. Lines beginning w
 **Example `~/.trisync/license_keys`:**
 ```
 # TRI-SYNC license keys — do not share this file
-TRISYNC-XXXX-XXXX-XXXX
+TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 ```
 
 For multi-node or containerized deployments, the recommended approach is to inject `TRISYNC_LICENSE_KEY` as a secret environment variable via your secret manager (Kubernetes Secrets, AWS Secrets Manager, HashiCorp Vault, etc.).

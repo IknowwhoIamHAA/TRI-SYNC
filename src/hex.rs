@@ -8,7 +8,7 @@ pub fn encode_hex(bytes: &[u8]) -> String {
 }
 
 pub fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
-    if !value.len().is_multiple_of(2) {
+    if value.len() % 2 != 0 {
         return Err("hex value must have even length".to_string());
     }
 
@@ -42,7 +42,7 @@ fn hex_to_nibble(value: char) -> Result<u8, String> {
 /// Accepts both upper and lower-case hex digits; the returned string always
 /// uses lower-case characters so it matches the output of `encode_hex`.
 pub fn normalize_hex(value: &str) -> Result<String, String> {
-    if !value.len().is_multiple_of(2) {
+    if value.len() % 2 != 0 {
         return Err("hex value must have even length".to_string());
     }
     if !value.chars().all(|c| c.is_ascii_hexdigit()) {

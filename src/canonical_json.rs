@@ -236,4 +236,45 @@ mod tests {
             "1234567890"
         );
     }
+
+    // ---------------------------------------------------------------------------
+    // SHA-256 of canonical JSON output — pinned vectors
+    //
+    // Pin the SHA-256 of canonical JSON serialisations so that any change to
+    // encoding (key order, escape style, numeric format) immediately fails these
+    // tests.  Vectors were computed from the live implementation and cross-checked
+    // against the TypeScript client.
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn sha256_vector_canonical_json_simple_object() {
+        // {"a":1,"b":2} — simplest sorted-key object
+        let value = json!({"b": 2, "a": 1});
+        let canonical = to_canonical_string(&value).expect("canonical");
+        assert_eq!(canonical, r#"{"a":1,"b":2}"#);
+        assert_eq!(
+            crate::digest::sha256_hex(canonical.as_bytes()),
+            "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+        );
+    }
+
+    #[test]
+    fn sha256_vector_canonical_json_null() {
+        let canonical = to_canonical_string(&serde_json::Value::Null).expect("null");
+        assert_eq!(canonical, "null");
+        assert_eq!(
+            crate::digest::sha256_hex(canonical.as_bytes()),
+            "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        );
+    }
+
+    #[test]
+    fn sha256_vector_canonical_json_empty_object() {
+        let canonical = to_canonical_string(&json!({})).expect("empty obj");
+        assert_eq!(canonical, "{}");
+        assert_eq!(
+            crate::digest::sha256_hex(canonical.as_bytes()),
+            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        );
+    }
 }

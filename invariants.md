@@ -2,7 +2,7 @@
 
 ## Encoding
 
-- All numbers: F64 big-endian (binary state map); full decimal notation in canonical JSON
+- All numbers: typed binary encoding in the BSM wire format (Integer=i64 BE 8 bytes, Decimal=u32-BE len + UTF-8 bytes); full decimal notation in canonical JSON
 - All decimal values: `canonicalize_decimal` enforces no leading zeros, no trailing zeros, no
   exponent notation (always expanded), and rejects values exceeding 256 significant digits
 - All keys: UTF-8 lexicographic (raw byte order; no normalization)

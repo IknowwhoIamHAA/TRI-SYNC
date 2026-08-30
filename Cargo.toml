@@ -2,6 +2,7 @@
 name = "tri-sync"
 version = "1.0.0"
 edition = "2024"
+rust-version = "1.85"
 description = "A local‑first deterministic runtime for reproducible workflows, automation, and AI auditing. Provides canonical JSON encoding, a binary state map, multi‑tenant isolation, and deterministic replay."
 license = "LicenseRef-TRI-SYNC-Commercial"
 repository = "https://github.com/IknowwhoIamHAA/TRI-SYNC"

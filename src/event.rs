@@ -101,6 +101,7 @@ pub struct Event {
 }
 
 impl Event {
+    #[allow(clippy::too_many_arguments)]
     pub fn state_write(
         seq: u64,
         tick: u64,
@@ -275,6 +276,7 @@ impl Event {
         Ok(event)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn compact(
         seq: u64,
         tick: u64,
