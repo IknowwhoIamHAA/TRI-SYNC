@@ -91,10 +91,10 @@ impl AppendOnlyEventLog {
         event.validate_prev_digest(&expected_prev)?;
         event.validate_digest()?;
 
-        if let Some(last) = &last_event
-            && last.namespace != event.namespace
-        {
-            return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
+        if let Some(last) = &last_event {
+            if last.namespace != event.namespace {
+                return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
+            }
         }
 
         if last_event.is_none() {
@@ -221,16 +221,18 @@ impl AppendOnlyEventLog {
         let mut updated = false;
 
         for line in content.lines() {
-            if !updated && let Some(payload) = line.strip_prefix(SEGMENT_PREFIX) {
-                let mut header: SegmentHeader = serde_json::from_str(payload)?;
-                header.seq_end = new_seq_end;
-                let header_value = serde_json::to_value(&header)?;
-                let header_canonical = to_canonical_string(&header_value)?;
-                new_content.push_str(SEGMENT_PREFIX);
-                new_content.push_str(&header_canonical);
-                new_content.push('\n');
-                updated = true;
-                continue;
+            if !updated {
+                if let Some(payload) = line.strip_prefix(SEGMENT_PREFIX) {
+                    let mut header: SegmentHeader = serde_json::from_str(payload)?;
+                    header.seq_end = new_seq_end;
+                    let header_value = serde_json::to_value(&header)?;
+                    let header_canonical = to_canonical_string(&header_value)?;
+                    new_content.push_str(SEGMENT_PREFIX);
+                    new_content.push_str(&header_canonical);
+                    new_content.push('\n');
+                    updated = true;
+                    continue;
+                }
             }
             new_content.push_str(line);
             new_content.push('\n');
