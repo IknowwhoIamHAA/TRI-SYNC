@@ -182,10 +182,10 @@ impl BinaryStateMap {
             let key = String::from_utf8(key_bytes.to_vec())
                 .map_err(|_| "key must be valid UTF-8".to_string())?;
 
-            if let Some(prev) = &previous_key
-                && prev.as_bytes() >= key.as_bytes()
-            {
-                return Err("ORDER_VIOLATION: keys must be strictly increasing".to_string());
+            if let Some(prev) = &previous_key {
+                if prev.as_bytes() >= key.as_bytes() {
+                    return Err("ORDER_VIOLATION: keys must be strictly increasing".to_string());
+                }
             }
             previous_key = Some(key.clone());
 
@@ -269,15 +269,15 @@ impl BinaryStateMap {
 
     fn insert_checked(&mut self, key: String, value: BsmValue) -> Result<(), String> {
         let value = normalize_value(value)?;
-        if let Some(existing) = self.inner.get(&key)
-            && existing.type_tag() != value.type_tag()
-        {
-            return Err(format!(
-                "TYPE_MISMATCH: key {} expected type 0x{:02x}, got 0x{:02x}",
-                key,
-                existing.type_tag(),
-                value.type_tag()
-            ));
+        if let Some(existing) = self.inner.get(&key) {
+            if existing.type_tag() != value.type_tag() {
+                return Err(format!(
+                    "TYPE_MISMATCH: key {} expected type 0x{:02x}, got 0x{:02x}",
+                    key,
+                    existing.type_tag(),
+                    value.type_tag()
+                ));
+            }
         }
         self.inner.insert(key, value);
         Ok(())
