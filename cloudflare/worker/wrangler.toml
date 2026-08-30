@@ -33,19 +33,10 @@ id = "REPLACE_WITH_YOUR_STAGING_MARKETING_CONTACTS_KV_NAMESPACE_ID"
 # ---------------------------------------------------------------------------
 [env.production]
 name = "trisync-license-worker"
-# Routes use api.trisync.dev to avoid the Cloudflare Pages custom-domain
-# capture that intercepts all traffic on trisync.dev before Worker routes can
-# match.  Required one-time DNS setup in the Cloudflare dashboard:
-#   Add a CNAME record: api.trisync.dev → trisync-license-worker.<account>.workers.dev
-#   (proxied / orange-cloud)
-# Also update the Stripe webhook endpoint to https://api.trisync.dev/webhook.
-routes = [
-  { pattern = "api.trisync.dev/*",   zone_name = "trisync.dev" },
-  { pattern = "trisync.dev/marketing/*", zone_name = "trisync.dev" },
-  { pattern = "trisync.dev/health",      zone_name = "trisync.dev" },
-  { pattern = "trisync.dev/validate",    zone_name = "trisync.dev" },
-  { pattern = "trisync.dev/webhook",     zone_name = "trisync.dev" },
-]
+# Routes are intentionally managed in the Cloudflare dashboard for
+# Workers Builds compatibility. Keep these route mappings configured there:
+#   api.trisync.dev/*, trisync.dev/marketing/*, trisync.dev/health,
+#   trisync.dev/validate, trisync.dev/webhook.
 
 [[env.production.kv_namespaces]]
 binding = "ISSUED_KEYS"
@@ -54,4 +45,3 @@ id = "513255134bf44c74882832e17c6eed30"
 [[env.production.kv_namespaces]]
 binding = "MARKETING_CONTACTS"
 id = "4e6e64d6c4ee413591a2911fc2f1e4b3"
-
