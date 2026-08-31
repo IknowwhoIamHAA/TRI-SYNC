@@ -180,7 +180,12 @@
       return show(result, 'err', 'Format must be TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX.');
     show(result, 'info', 'Checking…');
     try {
-      const resp = await fetch(WORKER_URL + '/validate?key=' + encodeURIComponent(key));
+      const resp = await fetch(WORKER_URL + '/validate', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ license_key: key })
+});
+
       if (resp.status === 200) {
         const d = await resp.json();
         const st = d.status || 'unknown';
