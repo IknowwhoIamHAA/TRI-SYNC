@@ -1,10 +1,10 @@
-name = "tri-sync-worker"
+name = "trisync-license-worker"
 main = "src/index.js"
 compatibility_date = "2026-08-29"
 
 # ---------------------------------------------------------------------------
-# Top-level (dev / local preview) — uses placeholder KV ids.
-# Override with real preview namespace ids for local `wrangler dev`.
+# Preview / Local Development
+# These can stay as placeholders unless you want preview KV.
 # ---------------------------------------------------------------------------
 [[kv_namespaces]]
 binding = "ISSUED_KEYS"
@@ -15,7 +15,7 @@ binding = "MARKETING_CONTACTS"
 id = "REPLACE_WITH_YOUR_PREVIEW_MARKETING_CONTACTS_KV_NAMESPACE_ID"
 
 # ---------------------------------------------------------------------------
-# Staging environment
+# Staging (optional)
 # ---------------------------------------------------------------------------
 [env.staging]
 name = "tri-sync-worker-staging"
@@ -29,14 +29,17 @@ binding = "MARKETING_CONTACTS"
 id = "REPLACE_WITH_YOUR_STAGING_MARKETING_CONTACTS_KV_NAMESPACE_ID"
 
 # ---------------------------------------------------------------------------
-# Production environment
+# Production — THIS is what Cloudflare CI deploys
 # ---------------------------------------------------------------------------
 [env.production]
 name = "trisync-license-worker"
-# Routes are intentionally managed in the Cloudflare dashboard for
-# Workers Builds compatibility. Keep these route mappings configured there:
-#   api.trisync.dev/*, trisync.dev/marketing/*, trisync.dev/health,
-#   trisync.dev/validate, trisync.dev/webhook.
+
+# Routes are intentionally managed in Cloudflare Dashboard:
+#   api.trisync.dev/*
+#   trisync.dev/marketing/*
+#   trisync.dev/health
+#   trisync.dev/validate
+#   trisync.dev/webhook
 
 [[env.production.kv_namespaces]]
 binding = "ISSUED_KEYS"
