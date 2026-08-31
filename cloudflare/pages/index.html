@@ -3,482 +3,200 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TRI-SYNC — Deterministic AI Auditability Runtime</title>
-<meta name="description" content="Protocol-frozen, cryptographically verifiable state for AI workflows, regulated data pipelines, and multi-tenant automation. v1.0.0 production-ready.">
+<title>TRI-SYNC</title>
+<meta name="description" content="Deterministic, cryptographically verifiable state for AI workflows and regulated pipelines.">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg:        #0a0c10;
-    --bg2:       #111318;
-    --bg3:       #181c24;
-    --border:    #1e2330;
-    --accent:    #4f8ef7;
-    --accent2:   #7c5cf7;
-    --green:     #22d47e;
-    --red:       #f75f5f;
-    --text:      #e8ecf4;
-    --muted:     #8892a4;
-    --radius:    12px;
+    --bg:     #0a0c10;
+    --bg2:    #111318;
+    --border: #1e2330;
+    --accent: #4f8ef7;
+    --green:  #22d47e;
+    --red:    #f75f5f;
+    --text:   #e8ecf4;
+    --muted:  #8892a4;
   }
 
-  html { scroll-behavior: smooth; }
-  body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; line-height: 1.65; font-size: 16px; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  code { font-family: monospace; font-size: 0.88em; }
-  pre  { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; overflow-x: auto; color: #a8d4ff; font-family: monospace; font-size: 0.85em; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1.5rem;
+    gap: 3rem;
+  }
 
-  .container { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem; }
-  .section    { padding: 5rem 0; }
-  .section-sm { padding: 3rem 0; }
-  .grid-3     { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; }
+  /* Header */
+  .hd { text-align: center; }
+  .hd h1 { font-size: clamp(2rem, 5vw, 3rem); font-weight: 800; letter-spacing: -.02em; }
+  .hd p  { margin-top: .6rem; color: var(--muted); font-size: 1rem; max-width: 480px; }
 
-  /* Nav */
-  nav { position: sticky; top: 0; z-index: 100; background: rgba(10,12,16,0.92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
-  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; gap: 1rem; }
-  .nav-logo  { font-size: 1.1rem; font-weight: 700; letter-spacing: .04em; color: var(--text); display: flex; align-items: center; gap: .5rem; }
-  .nav-badge { font-size: .6rem; font-weight: 700; background: var(--green); color: #000; padding: 2px 6px; border-radius: 4px; letter-spacing: .05em; }
-  .nav-links { display: flex; gap: 1.5rem; list-style: none; align-items: center; }
-  .nav-links a { color: var(--muted); font-size: .9rem; font-weight: 500; transition: color .15s; }
-  .nav-links a:hover { color: var(--text); text-decoration: none; }
-  .nav-cta { background: var(--accent) !important; color: #fff !important; padding: 6px 18px !important; border-radius: 6px; font-weight: 600 !important; }
-  @media (max-width: 640px) { .nav-links li:not(:last-child) { display: none; } }
+  /* Pricing card */
+  .cards {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+  }
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem 1.75rem;
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .card.featured { border-color: var(--accent); }
+  .tier  { font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .price { font-size: 2rem; font-weight: 800; }
+  .price span { font-size: .9rem; font-weight: 400; color: var(--muted); }
+  .desc  { font-size: .87rem; color: var(--muted); }
+  .feats { list-style: none; display: flex; flex-direction: column; gap: .4rem; flex: 1; }
+  .feats li { font-size: .85rem; color: var(--muted); display: flex; gap: .5rem; }
+  .feats li::before { content: '✓'; color: var(--green); font-weight: 700; flex-shrink: 0; }
+  .btn-wrap { display: flex; justify-content: center; margin-top: auto; }
+  .buy-btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: .95rem;
+    padding: .75rem 2rem;
+    border-radius: 8px;
+    text-decoration: none;
+    transition: opacity .15s;
+  }
+  .buy-btn:hover { opacity: .85; }
 
-  /* Buttons */
-  .btn { display: inline-flex; align-items: center; gap: .5rem; padding: .75rem 1.75rem; border-radius: 8px; font-size: .95rem; font-weight: 600; cursor: pointer; border: none; transition: opacity .15s, transform .1s; text-decoration: none; }
-  .btn:hover { opacity: .85; transform: translateY(-1px); text-decoration: none; }
-  .btn-primary  { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 4px 24px rgba(79,142,247,.3); }
-  .btn-secondary{ background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
-  .btn-lg { padding: .9rem 2.25rem; font-size: 1rem; }
-
-  /* Hero */
-  .hero { padding: 7rem 0 5rem; text-align: center; }
-  .eyebrow { display: inline-flex; align-items: center; gap: .5rem; font-size: .75rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); background: rgba(79,142,247,.08); border: 1px solid rgba(79,142,247,.22); padding: 5px 14px; border-radius: 100px; margin-bottom: 1.75rem; }
-  .eyebrow::before { content:''; width:7px; height:7px; background:var(--green); border-radius:50%; }
-  .hero h1 { font-size: clamp(2.4rem,5vw,3.8rem); font-weight: 800; line-height: 1.15; letter-spacing: -.02em; max-width: 800px; margin: 0 auto 1.5rem; }
-  .grad { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-  .hero-sub { font-size: 1.1rem; color: var(--muted); max-width: 600px; margin: 0 auto 2.5rem; }
-  .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-bottom: 3rem; }
-  .digest-wrap { text-align: center; }
-  .digest-label { font-size: .75rem; color: var(--muted); margin-bottom: .35rem; }
-  .digest-box { display: inline-block; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: .6rem 1.2rem; font-family: monospace; font-size: .78rem; color: var(--green); letter-spacing: .04em; }
-
-  /* Stat bar */
-  .stat-bar { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-  .stat-inner { display: flex; justify-content: center; flex-wrap: wrap; }
-  .stat-item { padding: 1.25rem 2.5rem; text-align: center; border-right: 1px solid var(--border); }
-  .stat-item:last-child { border-right: none; }
-  .stat-num { font-size: 1.5rem; font-weight: 800; }
-  .stat-lbl { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
-
-  /* Section headers */
-  .section-label { font-size: .72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: .6rem; }
-  .section-title { font-size: clamp(1.75rem,3vw,2.4rem); font-weight: 800; letter-spacing: -.02em; line-height: 1.2; margin-bottom: .75rem; }
-  .section-sub   { color: var(--muted); font-size: 1rem; }
-  .text-center { text-align: center; }
-
-  /* Feature cards */
-  .feature-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.75rem; transition: border-color .2s, transform .15s; }
-  .feature-card:hover { border-color: var(--accent); transform: translateY(-2px); }
-  .fi { font-size: 1.75rem; margin-bottom: .85rem; display: block; }
-  .feature-card h3 { font-size: .98rem; font-weight: 700; margin-bottom: .45rem; }
-  .feature-card p  { font-size: .88rem; color: var(--muted); }
-
-  /* Steps */
-  .steps { display: flex; flex-direction: column; position: relative; }
-  .steps::before { content:''; position:absolute; left:22px; top:0; bottom:0; width:2px; background:linear-gradient(to bottom,var(--accent),var(--accent2)); opacity:.2; }
-  .step { display: flex; gap: 1.5rem; padding: 1.5rem 0; align-items: flex-start; }
-  .step-num { width:46px; height:46px; background:linear-gradient(135deg,var(--accent),var(--accent2)); border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; flex-shrink:0; position:relative; z-index:1; }
-  .step h3 { font-size: 1rem; font-weight: 700; margin-bottom: .3rem; }
-  .step p  { font-size: .88rem; color: var(--muted); }
-
-  /* Use cases */
-  .uc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
-  .uc-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; }
-  .uc-sector { font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent2); margin-bottom: .3rem; }
-  .uc-card p { font-size: .87rem; color: var(--muted); }
-
-  /* Pricing */
-  .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; align-items: stretch; }
-  .price-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 2rem; display: flex; flex-direction: column; gap: 1rem; transition: transform .15s; }
-  .price-card:hover { transform: translateY(-3px); }
-  .price-card.featured { border-color: var(--accent); background: linear-gradient(160deg, rgba(79,142,247,.07) 0%, var(--bg2) 100%); position: relative; }
-  .featured-badge { position:absolute; top:-13px; left:50%; transform:translateX(-50%); background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; font-size:.7rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; padding:4px 14px; border-radius:100px; white-space:nowrap; }
-  .price-tier   { font-size: .75rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
-  .price-amount { font-size: 2.2rem; font-weight: 800; letter-spacing: -.03em; line-height: 1; }
-  .price-amount span { font-size: .95rem; font-weight: 400; color: var(--muted); }
-  .price-desc   { font-size: .87rem; color: var(--muted); }
-  .price-features { list-style: none; flex: 1; display: flex; flex-direction: column; gap: .5rem; }
-  .price-features li { font-size: .87rem; color: var(--muted); display: flex; gap: .55rem; }
-  .price-features li::before { content:'✓'; color:var(--green); font-weight:700; flex-shrink:0; }
-
-  /* Validate */
-  .validate-box { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 2.5rem; max-width: 560px; margin: 0 auto; }
-  .validate-box h3 { font-size: 1.15rem; font-weight: 700; margin-bottom: .4rem; }
-  .validate-box > p { font-size: .88rem; color: var(--muted); margin-bottom: 1.4rem; }
-  .input-row { display: flex; gap: .75rem; flex-wrap: wrap; }
-  .input-row input { flex: 1; min-width: 200px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: .7rem 1rem; color: var(--text); font-size: .9rem; font-family: monospace; outline: none; transition: border-color .15s; }
-  .input-row input:focus { border-color: var(--accent); }
-  .input-row input::placeholder { color: var(--muted); }
-  #vr { margin-top: 1rem; font-size: .87rem; padding: .75rem 1rem; border-radius: 8px; display: none; }
-  .ok    { background: rgba(34,212,126,.1); border: 1px solid rgba(34,212,126,.3); color: var(--green); }
-  .err   { background: rgba(247,95,95,.1);  border: 1px solid rgba(247,95,95,.3);  color: var(--red); }
-  .info  { background: rgba(79,142,247,.1); border: 1px solid rgba(79,142,247,.25); color: var(--accent); }
-
-  /* CTA banner */
-  .cta-banner { background: linear-gradient(135deg, rgba(79,142,247,.1), rgba(124,92,247,.1)); border: 1px solid rgba(79,142,247,.18); border-radius: 20px; padding: 3.5rem 2rem; text-align: center; }
-  .cta-banner h2 { font-size: clamp(1.6rem,3vw,2.2rem); font-weight: 800; margin-bottom: .75rem; }
-  .cta-banner p  { color: var(--muted); max-width: 480px; margin: 0 auto 2rem; }
-  .cta-actions   { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+  /* Validator */
+  .validator {
+    width: 100%;
+    max-width: 480px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .validator h2 { font-size: 1rem; font-weight: 700; }
+  .validator p  { font-size: .85rem; color: var(--muted); }
+  .row { display: flex; gap: .6rem; flex-wrap: wrap; }
+  .row input {
+    flex: 1; min-width: 200px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .65rem 1rem;
+    color: var(--text);
+    font-family: monospace;
+    font-size: .88rem;
+    outline: none;
+  }
+  .row input:focus { border-color: var(--accent); }
+  .row button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: .65rem 1.25rem;
+    font-size: .88rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .row button:hover { opacity: .85; }
+  #vr { font-size: .85rem; padding: .65rem 1rem; border-radius: 8px; display: none; }
+  .ok   { background: rgba(34,212,126,.1);  border: 1px solid rgba(34,212,126,.3);  color: var(--green); }
+  .err  { background: rgba(247,95,95,.1);   border: 1px solid rgba(247,95,95,.3);   color: var(--red); }
+  .info { background: rgba(79,142,247,.1);  border: 1px solid rgba(79,142,247,.25); color: var(--accent); }
 
   /* Footer */
-  footer { border-top: 1px solid var(--border); padding: 2.5rem 0; }
-  .foot-inner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
-  .foot-copy  { font-size: .83rem; color: var(--muted); }
-  .foot-links { display: flex; gap: 1.5rem; list-style: none; }
-  .foot-links a { font-size: .83rem; color: var(--muted); }
-  .foot-links a:hover { color: var(--text); }
-
-  /* Chips */
-  .chip { display:inline-block; font-size:.7rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; padding:3px 10px; border-radius:4px; margin:.2rem .3rem .2rem 0; }
-  .cb { background:rgba(79,142,247,.14); color:var(--accent); }
-  .cp { background:rgba(124,92,247,.14); color:var(--accent2); }
-  .cg { background:rgba(34,212,126,.12); color:var(--green); }
-
-  hr { border: none; border-top: 1px solid var(--border); }
-
-  /* Responsive two-col */
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; align-items: start; }
-  @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; gap: 2.5rem; } }
-
-  /* Code block */
-  .code-block { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; overflow-x: auto; }
-  .code-block code { color: #a8d4ff; font-size: .84rem; line-height: 1.75; font-family: monospace; white-space: pre; }
-  .cc { color: #4e5c75; }
-  .cmd { color: var(--green); }
-  .fl  { color: #f7c95f; }
-  .vl  { color: #f7a25f; }
+  footer { font-size: .78rem; color: var(--muted); text-align: center; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--text); }
 </style>
 </head>
 <body>
 
-<!-- Nav -->
-<nav>
-  <div class="container nav-inner">
-    <div class="nav-logo">TRI-SYNC <span class="nav-badge">v1.0.0</span></div>
-    <ul class="nav-links">
-      <li><a href="#features">Features</a></li>
-      <li><a href="#how-it-works">How it works</a></li>
-      <li><a href="#pricing">Pricing</a></li>
-      <li><a href="#validate">Validate key</a></li>
-      <li><a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener">Docs</a></li>
-      <li><a href="#pricing" class="nav-cta">Get License</a></li>
-    </ul>
-  </div>
-</nav>
-
-<!-- Hero -->
-<section class="hero">
-  <div class="container">
-    <div class="eyebrow">Protocol frozen &middot; Production-ready</div>
-    <h1>Deterministic AI auditability.<br><span class="grad">Cryptographically verifiable.</span></h1>
-    <p class="hero-sub">
-      TRI-SYNC is the portable, commercially-licensed Rust runtime that guarantees
-      reproducible state, SHA-256 chained audit trails, and cloud-neutral execution
-      for AI systems, regulated pipelines, and multi-tenant workflows.
-    </p>
-    <div class="hero-actions">
-      <a href="#pricing" class="btn btn-primary btn-lg">Get Your License Key &rarr;</a>
-      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">View on GitHub</a>
-    </div>
-    <div class="digest-wrap">
-      <p class="digest-label">Cross-language conformance root digest (SPEC §3.5)</p>
-      <span class="digest-box">768e154f65fb12f4419452ac76223006bf9097187294b0d9cec1260e22c664d3</span>
-    </div>
-  </div>
-</section>
-
-<!-- Stat bar -->
-<div class="stat-bar">
-  <div class="container stat-inner">
-    <div class="stat-item"><div class="stat-num">63</div><div class="stat-lbl">Tests passing</div></div>
-    <div class="stat-item"><div class="stat-num">0</div><div class="stat-lbl">CodeQL alerts</div></div>
-    <div class="stat-item"><div class="stat-num">SHA-256</div><div class="stat-lbl">Every event chained</div></div>
-    <div class="stat-item"><div class="stat-num">RFC&nbsp;8785</div><div class="stat-lbl">Canonical JSON</div></div>
-    <div class="stat-item"><div class="stat-num">v1.0.0</div><div class="stat-lbl">Wire format frozen</div></div>
-  </div>
+<div class="hd">
+  <h1>TRI-SYNC</h1>
+  <p>Deterministic, cryptographically verifiable state for AI workflows and regulated pipelines.</p>
 </div>
 
-<!-- Features -->
-<section class="section" id="features">
-  <div class="container">
-    <div class="text-center" style="margin-bottom:3rem">
-      <div class="section-label">Core guarantees</div>
-      <h2 class="section-title">Built for auditability at every layer</h2>
-      <p class="section-sub" style="max-width:520px;margin:0 auto">Every guarantee is normative and cannot be broken without a major version bump.</p>
-    </div>
-    <div class="grid-3">
-      <div class="feature-card"><span class="fi">🔗</span><h3>SHA-256 Digest Chain</h3><p>Every event is self-hashed and linked to the previous via <code>prev_digest</code>. Tampering with any event invalidates all subsequent digests — instantly detectable.</p></div>
-      <div class="feature-card"><span class="fi">♻️</span><h3>Deterministic Replay</h3><p>Identical ordered event logs produce byte-for-byte identical state on any conforming implementation — any machine, any OS, any time.</p></div>
-      <div class="feature-card"><span class="fi">📦</span><h3>Binary State Map (BSM)</h3><p>Big-endian, lexicographically ordered key-value store. The root digest is SHA-256 of the entire state — one hash proves nothing changed.</p></div>
-      <div class="feature-card"><span class="fi">🔐</span><h3>TICK_SEAL Checkpoints</h3><p>At the end of every logical tick, a <code>TICK_SEAL</code> event records the root digest. Verifiable snapshots any downstream node can independently confirm.</p></div>
-      <div class="feature-card"><span class="fi">🏢</span><h3>Multi-Tenant Isolation</h3><p>Namespace-prefixed keys. Cross-tenant reads and writes are protocol violations, detected and halted at runtime.</p></div>
-      <div class="feature-card"><span class="fi">📝</span><h3>Canonical JSON (RFC 8785)</h3><p>Sorted keys, no whitespace, lowercase <code>\uXXXX</code> escapes, no locale drift, no Unicode normalization. Same data always produces the same bytes.</p></div>
-      <div class="feature-card"><span class="fi">🔒</span><h3>OS-Level File Locking</h3><p>Every append acquires an exclusive advisory lock on a <code>.lock</code> sidecar file before any read-validate-write operation.</p></div>
-      <div class="feature-card"><span class="fi">⚛️</span><h3>Transactional Writes</h3><p><code>TransactionalStateMap</code> provides mutex-guarded atomic batch mutations with automatic rollback on error.</p></div>
-      <div class="feature-card"><span class="fi">🌐</span><h3>Cloud-Neutral</h3><p>Zero cloud dependencies. Runs on laptop, server, container, or embedded device. TypeScript and Rust reference implementations included.</p></div>
-    </div>
-  </div>
-</section>
+<div class="cards">
 
-<hr>
-
-<!-- How it works -->
-<section class="section" id="how-it-works">
-  <div class="container">
-    <div class="two-col">
-      <div>
-        <div class="section-label">Protocol pipeline</div>
-        <h2 class="section-title">From input to immutable audit trail</h2>
-        <p class="section-sub" style="margin-bottom:2rem">Every state transition follows the same deterministic path — guaranteed identical output for identical input.</p>
-        <div class="steps">
-          <div class="step"><div class="step-num">1</div><div><h3>Canonical JSON Encoding</h3><p>Input serialized to RFC 8785 — sorted keys, no whitespace, deterministic byte sequence.</p></div></div>
-          <div class="step"><div class="step-num">2</div><div><h3>Binary State Map Write</h3><p>Values stored in the BSM — big-endian, lexicographically ordered, type-tagged entries.</p></div></div>
-          <div class="step"><div class="step-num">3</div><div><h3>SHA-256 Digest Chain</h3><p>Event is self-hashed. Its digest and the previous event's digest are chained.</p></div></div>
-          <div class="step"><div class="step-num">4</div><div><h3>Append-Only Event Log</h3><p>Events written once, never modified. OS-locked, seq-tracked, tamper-evident.</p></div></div>
-          <div class="step"><div class="step-num">5</div><div><h3>Deterministic Replay</h3><p>Any node reconstructs current state from genesis — no external coordination needed.</p></div></div>
-        </div>
-      </div>
-      <div>
-        <div class="section-label" style="margin-bottom:1rem">Quick start</div>
-        <div class="code-block"><code><span class="cc"># Set your license key</span>
-<span class="cmd">export</span> <span class="fl">TRISYNC_LICENSE_KEY</span>=<span class="vl">TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX</span>
-
-<span class="cc"># Write a value</span>
-<span class="cmd">tri-sync</span> apply \
-  <span class="fl">--log</span>       events.jsonl \
-  <span class="fl">--namespace</span> tenant-a \
-  <span class="fl">--key</span>       job-status \
-  <span class="fl">--value</span>     <span class="vl">"running"</span> \
-  <span class="fl">--tick</span>      1
-
-<span class="cc"># Verify and seal the audit trail</span>
-<span class="cmd">tri-sync</span> verify <span class="fl">--log</span> events.jsonl <span class="fl">--seal</span>
-
-<span class="cc"># OK</span>
-<span class="cc"># events=2</span>
-<span class="cc"># root_digest=768e154f...</span></code></div>
-        <div style="margin-top:1.5rem">
-          <div class="section-label" style="margin-bottom:.6rem">Runs everywhere</div>
-          <span class="chip cg">Linux x86-64</span>
-          <span class="chip cg">Linux ARM64</span>
-          <span class="chip cg">macOS ARM64</span>
-          <span class="chip cg">macOS x86-64</span>
-          <span class="chip cb">Rust library</span>
-          <span class="chip cb">TypeScript client</span>
-          <span class="chip cp">Docker / Kubernetes</span>
-          <span class="chip cp">Cloudflare Workers</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<hr>
-
-<!-- Use cases -->
-<section class="section-sm" id="use-cases">
-  <div class="container">
-    <div class="text-center" style="margin-bottom:2.5rem">
-      <div class="section-label">Industries</div>
-      <h2 class="section-title">Built for regulated environments</h2>
-    </div>
-    <div class="uc-grid">
-      <div class="uc-card"><div class="uc-sector">Finance</div><p>Auditable order books, settlement reconciliation, regulatory reporting with provable computation history.</p></div>
-      <div class="uc-card"><div class="uc-sector">Healthcare</div><p>HIPAA-compliant audit logs for clinical decision systems, AI diagnostic trails, patient state tracking.</p></div>
-      <div class="uc-card"><div class="uc-sector">Insurance</div><p>Deterministic claims processing, reproducible underwriting models, fraud detection audit chains.</p></div>
-      <div class="uc-card"><div class="uc-sector">Government</div><p>Tamper-proof record systems, verifiable ballot processing, regulatory compliance pipelines.</p></div>
-      <div class="uc-card"><div class="uc-sector">AI Platforms</div><p>Reproducible model inference logs, prompt-response audit trails, multi-agent deterministic state.</p></div>
-      <div class="uc-card"><div class="uc-sector">Legal / Compliance</div><p>Immutable evidence chains, e-discovery-ready audit logs, cross-border data provenance.</p></div>
-    </div>
-  </div>
-</section>
-
-<hr>
-
-<!-- Pricing -->
-<section class="section" id="pricing">
-  <div class="container">
-    <div class="text-center" style="margin-bottom:3rem">
-      <div class="section-label">Licensing</div>
-      <h2 class="section-title">Simple, key-based activation</h2>
-      <p class="section-sub" style="max-width:500px;margin:0 auto">
-        Pay once. Your license key is emailed instantly via Resend. Set one environment variable. Done.
-      </p>
-    </div>
-    <div class="pricing-grid">
-
-      <div class="price-card">
-        <div class="price-tier">Developer</div>
-        <div class="price-amount">Free <span>/ eval</span></div>
-        <div class="price-desc">Single developer, evaluation and non-production use.</div>
-        <ul class="price-features">
-          <li>1 developer seat</li>
-          <li>Non-production only</li>
-          <li>All CLI features</li>
-          <li>Community support</li>
-        </ul>
-        <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener" class="btn btn-secondary" style="text-align:center;justify-content:center;margin-top:auto">Request eval key</a>
-      </div>
-
-      <div class="price-card featured">
-        <div class="featured-badge">Most popular</div>
-        <div class="price-tier">Team</div>
-        <div class="price-amount">Contact <span>/ year</span></div>
-        <div class="price-desc">Up to 10 developers. Production deployments included.</div>
-        <ul class="price-features">
-          <li>Up to 10 developer seats</li>
-          <li>Production deployments</li>
-          <li>All CLI + library features</li>
-          <li>Staging + production environments</li>
-          <li>Email support</li>
-          <li>Key delivered instantly by email</li>
-        </ul>
-        <!--
-          SETUP: Replace the href below with your Stripe Payment Link URL.
-          Get it from: Stripe Dashboard → Payment Links → Create link
-          Example: https://buy.stripe.com/xxxxx
-        -->
-        <a href="REPLACE_WITH_YOUR_STRIPE_PAYMENT_LINK" class="btn btn-primary" style="text-align:center;justify-content:center;margin-top:auto" id="buy-btn">
-          Buy Team License &rarr;
-        </a>
-      </div>
-
-      <div class="price-card">
-        <div class="price-tier">Enterprise / OEM</div>
-        <div class="price-amount">Contact <span>/ custom</span></div>
-        <div class="price-desc">Unlimited seats, SLA support, redistribution rights.</div>
-        <ul class="price-features">
-          <li>Unlimited developer seats</li>
-          <li>Production + embedded use</li>
-          <li>OEM redistribution rights</li>
-          <li>SLA support</li>
-          <li>Custom contract terms</li>
-        </ul>
-        <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener" class="btn btn-secondary" style="text-align:center;justify-content:center;margin-top:auto">Contact us</a>
-      </div>
-
-    </div>
-    <p style="text-align:center;font-size:.83rem;color:var(--muted);margin-top:1.5rem">
-      After purchase your key (<code>TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX</code>) arrives by email.
-      Activate with: <code>export TRISYNC_LICENSE_KEY=&lt;your-key&gt;</code>
-    </p>
-  </div>
-</section>
-
-<hr>
-
-<!-- Validate -->
-<section class="section-sm" id="validate">
-  <div class="container">
-    <div class="text-center" style="margin-bottom:2rem">
-      <div class="section-label">Activation</div>
-      <h2 class="section-title">Validate your license key</h2>
-    </div>
-    <div class="validate-box">
-      <h3>Check key status</h3>
-      <p>Enter your <code>TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX</code> license key to confirm it's active.</p>
-      <div class="input-row">
-        <input type="text" id="ki" placeholder="TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX" autocomplete="off" spellcheck="false">
-        <button class="btn btn-primary" onclick="doValidate()">Validate</button>
-      </div>
-      <div id="vr"></div>
-    </div>
-  </div>
-</section>
-
-<hr>
-
-<!-- CTA -->
-<section class="section">
-  <div class="container">
-    <div class="cta-banner">
-      <h2>Ready to add provable auditability?</h2>
-      <p>63 tests. 0 CodeQL alerts. Wire format frozen. Production-ready today.</p>
-      <div class="cta-actions">
-        <a href="#pricing" class="btn btn-primary btn-lg">Get Your License Key &rarr;</a>
-        <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">Read the Spec</a>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- Footer -->
-<footer>
-  <div class="container foot-inner">
-    <span class="foot-copy">&copy; 2026 TRI-SYNC. Commercially licensed software.</span>
-    <ul class="foot-links">
-      <li><a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener">GitHub</a></li>
-      <li><a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/SPEC.md" target="_blank" rel="noopener">Spec</a></li>
-      <li><a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/COMMERCIAL_LICENSE.md" target="_blank" rel="noopener">License</a></li>
-      <li><a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/docs/licensing.md" target="_blank" rel="noopener">Licensing FAQ</a></li>
+  <div class="card featured">
+    <div class="tier">Team</div>
+    <div class="price">$29 <span>/ month</span></div>
+    <div class="desc">Up to 10 developers. Production included. Key delivered by email.</div>
+    <ul class="feats">
+      <li>Up to 10 seats</li>
+      <li>Production deployments</li>
+      <li>Staging + production environments</li>
+      <li>Email support</li>
     </ul>
+    <div class="btn-wrap">
+      <a class="buy-btn" href="https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05" target="_blank" rel="noopener">Get License →</a>
+    </div>
   </div>
+
+</div>
+
+<div class="validator">
+  <h2>Validate your license key</h2>
+  <p>Enter your <code>TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX</code> key to confirm it is active.</p>
+  <div class="row">
+    <input type="text" id="ki" placeholder="TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX" autocomplete="off" spellcheck="false">
+    <button onclick="doValidate()">Check</button>
+  </div>
+  <div id="vr"></div>
+</div>
+
+<footer>
+  <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener">GitHub</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/COMMERCIAL_LICENSE.md" target="_blank" rel="noopener">License</a>
 </footer>
 
 <script>
-  // ─── Configuration ────────────────────────────────────────────────────────
-  //
-  // ⚠️  Replace with your deployed Cloudflare Worker URL.
-  //     Example: https://tri-sync-worker.your-account.workers.dev
-  //
-  const WORKER_URL = 'https://trisync.dev';
+  const WORKER_URL = 'https://api.trisync.dev';
 
-  // ─── License key validation ───────────────────────────────────────────────
   async function doValidate() {
     const input = document.getElementById('ki');
     const result = document.getElementById('vr');
     const key = input.value.trim().toUpperCase();
-
     hide(result);
-
-    if (!key) { return show(result, 'err', 'Please enter a license key.'); }
-
-    if (!/^TRI-[0-9A-F]{8}-[0-9A-F]{8}-[0-9A-F]{8}$/.test(key)) {
-      return show(result, 'err', 'Key format must be TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX (3 groups of 8 hex characters).');
-    }
-
+    if (!key) return show(result, 'err', 'Please enter a license key.');
+    if (!/^TRI-[0-9A-F]{8}-[0-9A-F]{8}-[0-9A-F]{8}$/.test(key))
+      return show(result, 'err', 'Format must be TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX.');
     show(result, 'info', 'Checking…');
-
     try {
       const resp = await fetch(WORKER_URL + '/validate?key=' + encodeURIComponent(key));
-
       if (resp.status === 200) {
-        const data = await resp.json();
-        const st = data.status || 'unknown';
-        if (st === 'active') {
-          show(result, 'ok', '✓ License key is active. Issued: ' + (data.createdAt || '—'));
-        } else if (st === 'revoked') {
-          show(result, 'err', '✗ License key has been revoked. Reason: ' + (data.revokedReason || '—'));
-        } else {
-          show(result, 'info', 'Key found. Status: ' + st);
-        }
-      } else if (resp.status === 404) {
-        show(result, 'err', '✗ License key not found. Check your key and try again.');
-      } else if (resp.status === 429) {
-        show(result, 'err', 'Too many requests. Please wait a moment and try again.');
-      } else {
-        show(result, 'err', 'Unexpected response (' + resp.status + '). Please try again.');
-      }
+        const d = await resp.json();
+        const st = d.status || 'unknown';
+        if (st === 'active')   show(result, 'ok',  '✓ Active. Issued: ' + (d.createdAt || '—'));
+        else if (st === 'revoked') show(result, 'err', '✗ Revoked. Reason: ' + (d.revokedReason || '—'));
+        else                   show(result, 'info', 'Status: ' + st);
+      } else if (resp.status === 404) show(result, 'err', '✗ Key not found.');
+      else if (resp.status === 429)   show(result, 'err', 'Too many requests. Try again shortly.');
+      else                            show(result, 'err', 'Error ' + resp.status + '. Try again.');
     } catch (_) {
-      show(result, 'err', 'Could not reach the validation service. Check your connection.');
+      show(result, 'err', 'Could not reach the validation service.');
     }
   }
 
   function show(el, cls, msg) { el.className = cls; el.textContent = msg; el.style.display = 'block'; }
   function hide(el) { el.style.display = 'none'; }
-  function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   document.getElementById('ki').addEventListener('keydown', e => { if (e.key === 'Enter') doValidate(); });
   document.getElementById('ki').addEventListener('input',   e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''); });

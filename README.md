@@ -14,14 +14,16 @@ TRI‑SYNC is a portable, commercially-licensed Rust runtime that guarantees rep
 
 TRI-SYNC requires a commercial license for production use.
 
+**Purchase a 1-month license key ($29/month):**
+
 ```
-https://github.com/IknowwhoIamHAA/TRI-SYNC
+https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
 ```
 
 Once you have your key:
 
 ```bash
-export TRISYNC_LICENSE_KEY=TRISYNC-XXXX-XXXX-XXXX
+export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 ```
 
 ### 2 — Download or Build
@@ -43,7 +45,7 @@ cargo build --release
 ### 3 — Verify
 
 ```bash
-export TRISYNC_LICENSE_KEY=TRISYNC-XXXX-XXXX-XXXX
+export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 ./tri-sync digest --input "hello"
 # ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 ```
@@ -104,7 +106,7 @@ Exit code `0` means the log is valid. Exit code `1` means a protocol violation w
 
 | Step | Action |
 |---|---|
-| 1 | Pay → receive license key |
+| 1 | [Purchase a 1-month license key ($29/month)](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
 | 2 | `export TRISYNC_LICENSE_KEY=<your-key>` |
 | 3 | Run `tri-sync <command>` |
 
@@ -259,6 +261,10 @@ wrangler deploy --env production
 
 `STRIPE_WEBHOOK_SECRET` is the raw `whsec_...` value from the Stripe dashboard — **not** Base64-encoded.
 
+For Workers Builds, keep custom-domain route mappings in the Cloudflare dashboard
+(instead of `wrangler.toml`) for `api.trisync.dev/*`, `trisync.dev/marketing/*`,
+`trisync.dev/health`, `trisync.dev/validate`, and `trisync.dev/webhook`.
+
 ### End-to-End Flow
 
 ```
@@ -286,7 +292,7 @@ Customer activates:
 **v1.0.0 — Protocol frozen. Production-ready.**
 
 - ✅ Wire format frozen — no breaking changes after v1.0.0
-- ✅ 63 tests pass
+- ✅ 110 tests pass
 - ✅ CodeQL: 0 security alerts
 - ✅ No TODOs or FIXMEs in protocol-critical code
 - ✅ Cross-language determinism test vector pinned: `768e154f…`
@@ -299,4 +305,4 @@ Customer activates:
 
 TRI-SYNC is commercially licensed. See [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for full terms.
 
-For licensing inquiries: https://github.com/IknowwhoIamHAA/TRI-SYNC
+For licensing inquiries: https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05

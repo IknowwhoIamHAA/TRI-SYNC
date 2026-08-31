@@ -91,10 +91,10 @@ impl AppendOnlyEventLog {
         event.validate_prev_digest(&expected_prev)?;
         event.validate_digest()?;
 
-        if let Some(last) = &last_event
-            && last.namespace != event.namespace
-        {
-            return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
+        if let Some(last) = &last_event {
+            if last.namespace != event.namespace {
+                return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
+            }
         }
 
         if last_event.is_none() {

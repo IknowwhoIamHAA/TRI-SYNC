@@ -9,7 +9,7 @@ TRI-SYNC is commercially licensed software. Use in production requires a valid l
 TRI-SYNC uses a **key-based activation model**:
 
 1. **Pay** — purchase a commercial license (see below).
-2. **Receive key** — you receive a license key string (e.g., `TRISYNC-XXXX-XXXX-XXXX`).
+2. **Receive key** — you receive a license key string (e.g., `TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX`).
 3. **Set environment variable** — export your key before running any `tri-sync` command.
 4. **Use TRI-SYNC** — run normally in production.
 
@@ -21,13 +21,13 @@ If the key is missing, empty, or invalid, `tri-sync` prints a clear error and ex
 
 ### Step 1 — Obtain a License Key
 
-Contact the TRI-SYNC team or visit:
+**Purchase a 1-month license key ($29/month):**
 
 ```
-https://github.com/IknowwhoIamHAA/TRI-SYNC
+https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
 ```
 
-Choose a license tier appropriate for your deployment (see tiers below).
+After completing the purchase, you will receive a license key by email.
 
 ### Step 2 — Install TRI-SYNC
 
@@ -48,7 +48,7 @@ cargo build --release
 ### Step 3 — Set Your License Key
 
 ```bash
-export TRISYNC_LICENSE_KEY=TRISYNC-XXXX-XXXX-XXXX
+export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 ```
 
 For persistent activation, add the export to your shell profile (`~/.bashrc`, `~/.zshrc`) or your service's environment configuration.
@@ -78,7 +78,7 @@ The key-store file is a plain text file with one key per line. Lines beginning w
 **Example `~/.trisync/license_keys`:**
 ```
 # TRI-SYNC license keys — do not share this file
-TRISYNC-XXXX-XXXX-XXXX
+TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 ```
 
 For multi-node or containerized deployments, the recommended approach is to inject `TRISYNC_LICENSE_KEY` as a secret environment variable via your secret manager (Kubernetes Secrets, AWS Secrets Manager, HashiCorp Vault, etc.).
@@ -94,7 +94,7 @@ For multi-node or containerized deployments, the recommended approach is to inje
 | **Enterprise** | Unlimited developers, production deployments, SLA support |
 | **OEM** | Redistribution rights, embedded use in third-party products |
 
-Contact [the TRI-SYNC team](https://github.com/IknowwhoIamHAA/TRI-SYNC) to discuss pricing and terms for your use case.
+Contact [the TRI-SYNC team](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) to discuss pricing and terms for your use case.
 
 ---
 

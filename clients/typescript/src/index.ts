@@ -110,10 +110,11 @@ function jsonString(s: string): string {
  * @param data  Input bytes.
  * @returns     Lowercase 64-character hex digest string.
  */
-export async function sha256Hex(data: Uint8Array): Promise<string> {
-  const input = new Uint8Array(data.byteLength);
-  input.set(data);
-  const buf = await crypto.subtle.digest('SHA-256', input);
+export async function sha256Hex(data: Uint8Array<ArrayBuffer>): Promise<string> {
+  // `Uint8Array<ArrayBuffer>` (TS 5.7+) ensures a zero-offset, tightly-sized
+  // backing buffer, satisfying the `ArrayBufferView` contract required by
+  // `crypto.subtle.digest` across runtimes (Node ≥ 22, Deno, Bun, browsers).
+  const buf = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(buf))
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
@@ -149,7 +150,7 @@ const TYPE_NULL    = 0x06;
  * @param entries  Map of key → BsmValue pairs.
  * @returns        BSM wire bytes.
  */
-export function encodeBsm(entries: Map<string, BsmValue>): Uint8Array {
+export function encodeBsm(entries: Map<string, BsmValue>): Uint8Array<ArrayBuffer> {
   const encoder = new TextEncoder();
 
   // Sort keys by raw UTF-8 byte sequence.
@@ -163,13 +164,13 @@ export function encodeBsm(entries: Map<string, BsmValue>): Uint8Array {
     return ab.length - bb.length;
   });
 
-  const parts: Uint8Array[] = [];
+  const parts: Uint8Array<ArrayBuffer>[] = [];
 
   // entry_count: u32 BE
   parts.push(u32be(sorted.length));
 
   for (const [key, val] of sorted) {
-    const keyBytes = encoder.encode(key);
+    const keyBytes = encoder.encode(key) as Uint8Array<ArrayBuffer>;
     // key_len: u16 BE
     parts.push(u16be(keyBytes.length));
     parts.push(keyBytes);
@@ -179,13 +180,13 @@ export function encodeBsm(entries: Map<string, BsmValue>): Uint8Array {
   return concat(parts);
 }
 
-function encodeValue(val: BsmValue, encoder: TextEncoder): Uint8Array {
+function encodeValue(val: BsmValue, encoder: TextEncoder): Uint8Array<ArrayBuffer> {
   switch (val.type) {
     case 'Boolean':
-      return new Uint8Array([TYPE_BOOLEAN, val.value ? 1 : 0]);
+      return new Uint8Array([TYPE_BOOLEAN, val.value ? 1 : 0]) as Uint8Array<ArrayBuffer>;
 
     case 'Integer': {
-      const out = new Uint8Array(9);
+      const out = new Uint8Array(9) as Uint8Array<ArrayBuffer>;
       out[0] = TYPE_INTEGER;
       const view = new DataView(out.buffer);
       view.setBigInt64(1, val.value, false /* big-endian */);
@@ -193,20 +194,22 @@ function encodeValue(val: BsmValue, encoder: TextEncoder): Uint8Array {
     }
 
     case 'Decimal': {
-      const bytes = encoder.encode(val.value);
-      return concat([new Uint8Array([TYPE_DECIMAL]), u32be(bytes.length), bytes]);
+      const bytes = encoder.encode(val.value) as Uint8Array<ArrayBuffer>;
+      return concat([new Uint8Array([TYPE_DECIMAL]) as Uint8Array<ArrayBuffer>, u32be(bytes.length), bytes]);
     }
 
     case 'String': {
-      const bytes = encoder.encode(val.value);
-      return concat([new Uint8Array([TYPE_STRING]), u32be(bytes.length), bytes]);
+      const bytes = encoder.encode(val.value) as Uint8Array<ArrayBuffer>;
+      return concat([new Uint8Array([TYPE_STRING]) as Uint8Array<ArrayBuffer>, u32be(bytes.length), bytes]);
     }
 
-    case 'Bytes':
-      return concat([new Uint8Array([TYPE_BYTES]), u32be(val.value.length), val.value]);
+    case 'Bytes': {
+      const bytes = val.value as unknown as Uint8Array<ArrayBuffer>;
+      return concat([new Uint8Array([TYPE_BYTES]) as Uint8Array<ArrayBuffer>, u32be(bytes.length), bytes]);
+    }
 
     case 'Null':
-      return new Uint8Array([TYPE_NULL]);
+      return new Uint8Array([TYPE_NULL]) as Uint8Array<ArrayBuffer>;
   }
 }
 
@@ -249,21 +252,21 @@ export async function verifyRootDigest(
 // Low-level binary helpers
 // ---------------------------------------------------------------------------
 
-function u32be(n: number): Uint8Array {
-  const buf = new Uint8Array(4);
+function u32be(n: number): Uint8Array<ArrayBuffer> {
+  const buf = new Uint8Array(4) as Uint8Array<ArrayBuffer>;
   new DataView(buf.buffer).setUint32(0, n, false);
   return buf;
 }
 
-function u16be(n: number): Uint8Array {
-  const buf = new Uint8Array(2);
+function u16be(n: number): Uint8Array<ArrayBuffer> {
+  const buf = new Uint8Array(2) as Uint8Array<ArrayBuffer>;
   new DataView(buf.buffer).setUint16(0, n, false);
   return buf;
 }
 
-function concat(arrays: Uint8Array[]): Uint8Array {
+function concat(arrays: Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuffer> {
   const total = arrays.reduce((sum, a) => sum + a.length, 0);
-  const out = new Uint8Array(total);
+  const out = new Uint8Array(total) as Uint8Array<ArrayBuffer>;
   let offset = 0;
   for (const a of arrays) {
     out.set(a, offset);

@@ -1,0 +1,17 @@
+TRI-SYNC
+Copyright (c) 2026 TRI-SYNC. All rights reserved.
+
+This product includes software developed by third parties under the
+Apache License, Version 2.0 (the "License"). You may obtain a copy of
+the License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Third-party components used by TRI-SYNC that are licensed under
+Apache 2.0 include dependencies pulled transitively via Cargo. Full
+dependency license information is available by running:
+
+    cargo metadata --format-version 1 | jq '.packages[].license'
+
+The TRI-SYNC source code itself is NOT licensed under Apache 2.0.
+It is commercially licensed. See COMMERCIAL_LICENSE.md.
