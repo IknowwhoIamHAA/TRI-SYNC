@@ -1,5 +1,7 @@
 use serde_json::{Map, Number, Value};
 
+use crate::decimal::canonicalize_json_number;
+
 pub fn to_canonical_string(value: &Value) -> Result<String, String> {
     let mut out = String::new();
     write_value(value, &mut out)?;
@@ -45,114 +47,18 @@ fn write_object(map: &Map<String, Value>, out: &mut String) -> Result<(), String
 }
 
 fn canonicalize_number(number: &Number) -> Result<String, String> {
-    let rendered = number.to_string();
-
-    if rendered.starts_with('+') {
-        return Err("numeric canonicalization failed: '+' sign is forbidden".to_string());
-    }
-
-    if rendered == "-0" || rendered == "-0.0" {
-        return Err("numeric canonicalization failed: '-0' is forbidden".to_string());
-    }
-
-    if rendered.contains('e') || rendered.contains('E') {
-        return canonicalize_exponent(&rendered);
-    }
-
-    if let Some(dot) = rendered.find('.') {
-        let integer_part = &rendered[..dot];
-        let mut frac = rendered[dot + 1..].to_string();
-
-        if has_invalid_leading_zero(integer_part) {
-            return Err("numeric canonicalization failed: leading zeros are forbidden".to_string());
-        }
-
-        while frac.ends_with('0') {
-            frac.pop();
-        }
-
-        if frac.is_empty() {
-            if integer_part == "-0" {
-                return Err("numeric canonicalization failed: '-0' is forbidden".to_string());
-            }
-            return Ok(integer_part.to_string());
-        }
-
-        if integer_part == "-0" {
-            return Ok(format!("-0.{frac}"));
-        }
-
-        return Ok(format!("{integer_part}.{frac}"));
-    }
-
-    if has_invalid_leading_zero(&rendered) {
-        return Err("numeric canonicalization failed: leading zeros are forbidden".to_string());
-    }
-
-    Ok(rendered)
+    canonicalize_json_number(number)
 }
 
-fn canonicalize_exponent(number: &str) -> Result<String, String> {
-    let normalized = number.replace('E', "e");
-    let (mantissa, exponent) = normalized
-        .split_once('e')
-        .ok_or_else(|| "numeric canonicalization failed: malformed exponent".to_string())?;
-
-    if exponent.starts_with('+') || !exponent.starts_with('-') {
-        return Err("numeric canonicalization failed: positive exponent is forbidden".to_string());
-    }
-
-    let value = normalized
-        .parse::<f64>()
-        .map_err(|_| "numeric canonicalization failed: malformed decimal".to_string())?;
-    if !value.is_finite() {
-        return Err("numeric canonicalization failed: NaN/Infinity are forbidden".to_string());
-    }
-
-    if value.abs() >= 1e-6 {
-        return Err(
-            "numeric canonicalization failed: exponent notation only allowed for abs(value) < 1e-6"
-                .to_string(),
-        );
-    }
-
-    if mantissa.starts_with('+') || mantissa == "-0" {
-        return Err("numeric canonicalization failed: invalid mantissa sign".to_string());
-    }
-
-    let mut chars = mantissa.chars();
-    if matches!(chars.next(), Some('-')) {
-        if !matches!(chars.next(), Some('1'..='9')) {
-            return Err("numeric canonicalization failed: mantissa must be normalized".to_string());
-        }
-    } else if !matches!(mantissa.chars().next(), Some('1'..='9')) {
-        return Err("numeric canonicalization failed: mantissa must be normalized".to_string());
-    }
-
-    let mut clean_mantissa = mantissa.to_string();
-    if clean_mantissa.contains('.') {
-        while clean_mantissa.ends_with('0') {
-            clean_mantissa.pop();
-        }
-        if clean_mantissa.ends_with('.') {
-            clean_mantissa.pop();
-        }
-    }
-
-    if clean_mantissa == "-0" {
-        return Err("numeric canonicalization failed: '-0' is forbidden".to_string());
-    }
-
-    Ok(format!("{clean_mantissa}e{exponent}"))
-}
-
-fn has_invalid_leading_zero(integer_part: &str) -> bool {
-    if integer_part.starts_with("-0") {
-        return integer_part.len() > 2;
-    }
-    integer_part.starts_with('0') && integer_part.len() > 1
-}
-
+/// Write a JSON string value.
+///
+/// String values are written as raw UTF-8; no Unicode normalization is applied.
+/// Per TRI-SYNC SPEC §5.3, implementations MUST NOT apply NFC, NFD, NFKC, or
+/// NFKD normalization. Two strings that differ only in normalization form are
+/// considered distinct values and will produce distinct digests.
+///
+/// Control characters U+0000–U+001F are escaped as `\uXXXX` with lowercase hex
+/// digits (RFC 8785 §3.2.2).
 fn write_json_string(input: &str, out: &mut String) {
     out.push('"');
     for c in input.chars() {
@@ -180,7 +86,7 @@ fn write_json_string(input: &str, out: &mut String) {
 fn hex_digit(nibble: u8) -> char {
     match nibble {
         0..=9 => (b'0' + nibble) as char,
-        10..=15 => (b'A' + nibble - 10) as char,
+        10..=15 => (b'a' + nibble - 10) as char,
         _ => unreachable!(),
     }
 }
@@ -216,7 +122,159 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str("1e-7").expect("json parse");
         assert_eq!(
             to_canonical_string(&value).expect("canonical encoding"),
-            "1e-7"
+            "0.0000001"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // No Unicode normalization — raw UTF-8 bytes must be preserved
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn raw_utf8_nfd_and_nfc_produce_different_canonical_json() {
+        // SPEC §5.3: normalization is MUST NOT. NFD "a\u{0301}" and NFC "\u{00E1}"
+        // are distinct byte sequences and MUST produce distinct canonical JSON.
+        let nfd_value = serde_json::Value::String("a\u{0301}".to_string());
+        let nfc_value = serde_json::Value::String("\u{00E1}".to_string());
+
+        let nfd_canonical = to_canonical_string(&nfd_value).expect("nfd canonical");
+        let nfc_canonical = to_canonical_string(&nfc_value).expect("nfc canonical");
+        assert_ne!(
+            nfd_canonical, nfc_canonical,
+            "NFD and NFC forms must produce distinct canonical JSON (no normalization)"
+        );
+    }
+
+    #[test]
+    fn raw_utf8_nfd_and_nfc_object_keys_produce_different_canonical_json() {
+        // Object keys that differ only in normalization form are distinct keys.
+        let mut nfd_map = serde_json::Map::new();
+        nfd_map.insert("a\u{0301}".to_string(), json!(1));
+        let mut nfc_map = serde_json::Map::new();
+        nfc_map.insert("\u{00E1}".to_string(), json!(1));
+
+        let nfd_canonical = to_canonical_string(&serde_json::Value::Object(nfd_map)).expect("nfd");
+        let nfc_canonical = to_canonical_string(&serde_json::Value::Object(nfc_map)).expect("nfc");
+        assert_ne!(
+            nfd_canonical, nfc_canonical,
+            "NFD and NFC object keys must produce distinct canonical JSON"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Fix 12: RFC 8785 / JCS conformance test vectors
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn rfc8785_null_value() {
+        assert_eq!(
+            to_canonical_string(&serde_json::Value::Null).expect("null"),
+            "null"
+        );
+    }
+
+    #[test]
+    fn rfc8785_boolean_values() {
+        assert_eq!(to_canonical_string(&json!(true)).expect("true"), "true");
+        assert_eq!(to_canonical_string(&json!(false)).expect("false"), "false");
+    }
+
+    #[test]
+    fn rfc8785_empty_object() {
+        assert_eq!(to_canonical_string(&json!({})).expect("empty obj"), "{}");
+    }
+
+    #[test]
+    fn rfc8785_empty_array() {
+        assert_eq!(to_canonical_string(&json!([])).expect("empty arr"), "[]");
+    }
+
+    #[test]
+    fn rfc8785_string_escapes_control_characters() {
+        // U+0000 through U+001F must be escaped as \uXXXX with lowercase hex (RFC 8785 §3.2.2)
+        let value = serde_json::Value::String("\u{0000}".to_string());
+        let canonical = to_canonical_string(&value).expect("control char");
+        assert_eq!(canonical, r#""\u0000""#);
+
+        let value = serde_json::Value::String("\u{001F}".to_string());
+        let canonical = to_canonical_string(&value).expect("control char");
+        assert_eq!(canonical, r#""\u001f""#);
+    }
+
+    #[test]
+    fn rfc8785_string_escapes_backslash_and_quote() {
+        let value = serde_json::Value::String("a\"b\\c".to_string());
+        assert_eq!(
+            to_canonical_string(&value).expect("escapes"),
+            r#""a\"b\\c""#
+        );
+    }
+
+    #[test]
+    fn rfc8785_nested_object_keys_sorted_lexicographically() {
+        // RFC 8785 §3.2.3: keys sorted by their UTF-16 code unit sequence.
+        // For ASCII-only keys, byte order equals UTF-16 code unit order.
+        let value = json!({"b": 2, "a": 1, "c": 3});
+        assert_eq!(
+            to_canonical_string(&value).expect("sorted"),
+            r#"{"a":1,"b":2,"c":3}"#
+        );
+    }
+
+    #[test]
+    fn rfc8785_array_preserves_order() {
+        let value = json!([3, 1, 2]);
+        assert_eq!(to_canonical_string(&value).expect("array"), "[3,1,2]");
+    }
+
+    #[test]
+    fn rfc8785_integer_numbers() {
+        assert_eq!(to_canonical_string(&json!(0)).expect("zero"), "0");
+        assert_eq!(to_canonical_string(&json!(-1)).expect("neg"), "-1");
+        assert_eq!(
+            to_canonical_string(&json!(1234567890)).expect("large"),
+            "1234567890"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // SHA-256 of canonical JSON output — pinned vectors
+    //
+    // Pin the SHA-256 of canonical JSON serialisations so that any change to
+    // encoding (key order, escape style, numeric format) immediately fails these
+    // tests.  Vectors were computed from the live implementation and cross-checked
+    // against the TypeScript client.
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn sha256_vector_canonical_json_simple_object() {
+        // {"a":1,"b":2} — simplest sorted-key object
+        let value = json!({"b": 2, "a": 1});
+        let canonical = to_canonical_string(&value).expect("canonical");
+        assert_eq!(canonical, r#"{"a":1,"b":2}"#);
+        assert_eq!(
+            crate::digest::sha256_hex(canonical.as_bytes()),
+            "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+        );
+    }
+
+    #[test]
+    fn sha256_vector_canonical_json_null() {
+        let canonical = to_canonical_string(&serde_json::Value::Null).expect("null");
+        assert_eq!(canonical, "null");
+        assert_eq!(
+            crate::digest::sha256_hex(canonical.as_bytes()),
+            "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        );
+    }
+
+    #[test]
+    fn sha256_vector_canonical_json_empty_object() {
+        let canonical = to_canonical_string(&json!({})).expect("empty obj");
+        assert_eq!(canonical, "{}");
+        assert_eq!(
+            crate::digest::sha256_hex(canonical.as_bytes()),
+            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
         );
     }
 }

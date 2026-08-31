@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRI-SYNC</title>
+<meta name="description" content="Deterministic, cryptographically verifiable state for AI workflows and regulated pipelines.">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:     #0a0c10;
+    --bg2:    #111318;
+    --border: #1e2330;
+    --accent: #4f8ef7;
+    --green:  #22d47e;
+    --red:    #f75f5f;
+    --text:   #e8ecf4;
+    --muted:  #8892a4;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1.5rem;
+    gap: 3rem;
+  }
+
+  /* Header */
+  .hd { text-align: center; }
+  .hd h1 { font-size: clamp(2rem, 5vw, 3rem); font-weight: 800; letter-spacing: -.02em; }
+  .hd p  { margin-top: .6rem; color: var(--muted); font-size: 1rem; max-width: 480px; }
+
+  /* Pricing card */
+  .cards {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+  }
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem 1.75rem;
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .card.featured { border-color: var(--accent); }
+  .tier  { font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .price { font-size: 2rem; font-weight: 800; }
+  .price span { font-size: .9rem; font-weight: 400; color: var(--muted); }
+  .desc  { font-size: .87rem; color: var(--muted); }
+  .feats { list-style: none; display: flex; flex-direction: column; gap: .4rem; flex: 1; }
+  .feats li { font-size: .85rem; color: var(--muted); display: flex; gap: .5rem; }
+  .feats li::before { content: '✓'; color: var(--green); font-weight: 700; flex-shrink: 0; }
+  .btn-wrap { display: flex; justify-content: center; margin-top: auto; }
+  .buy-btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: .95rem;
+    padding: .75rem 2rem;
+    border-radius: 8px;
+    text-decoration: none;
+    transition: opacity .15s;
+  }
+  .buy-btn:hover { opacity: .85; }
+
+  /* Validator */
+  .validator {
+    width: 100%;
+    max-width: 480px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .validator h2 { font-size: 1rem; font-weight: 700; }
+  .validator p  { font-size: .85rem; color: var(--muted); }
+  .row { display: flex; gap: .6rem; flex-wrap: wrap; }
+  .row input {
+    flex: 1; min-width: 200px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .65rem 1rem;
+    color: var(--text);
+    font-family: monospace;
+    font-size: .88rem;
+    outline: none;
+  }
+  .row input:focus { border-color: var(--accent); }
+  .row button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: .65rem 1.25rem;
+    font-size: .88rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .row button:hover { opacity: .85; }
+  #vr { font-size: .85rem; padding: .65rem 1rem; border-radius: 8px; display: none; }
+  .ok   { background: rgba(34,212,126,.1);  border: 1px solid rgba(34,212,126,.3);  color: var(--green); }
+  .err  { background: rgba(247,95,95,.1);   border: 1px solid rgba(247,95,95,.3);   color: var(--red); }
+  .info { background: rgba(79,142,247,.1);  border: 1px solid rgba(79,142,247,.25); color: var(--accent); }
+
+  /* Footer */
+  footer { font-size: .78rem; color: var(--muted); text-align: center; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="hd">
+  <h1>TRI-SYNC</h1>
+  <p>Deterministic, cryptographically verifiable state for AI workflows and regulated pipelines.</p>
+</div>
+
+<div class="cards">
+
+  <div class="card featured">
+    <div class="tier">Team</div>
+    <div class="price">$29 <span>/ month</span></div>
+    <div class="desc">Up to 10 developers. Production included. Key delivered by email.</div>
+    <ul class="feats">
+      <li>Up to 10 seats</li>
+      <li>Production deployments</li>
+      <li>Staging + production environments</li>
+      <li>Email support</li>
+    </ul>
+    <div class="btn-wrap">
+      <a class="buy-btn" href="https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05" target="_blank" rel="noopener">Get License →</a>
+    </div>
+  </div>
+
+</div>
+
+<div class="validator">
+  <h2>Validate your license key</h2>
+  <p>Enter your <code>TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX</code> key to confirm it is active.</p>
+  <div class="row">
+    <input type="text" id="ki" placeholder="TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX" autocomplete="off" spellcheck="false">
+    <button onclick="doValidate()">Check</button>
+  </div>
+  <div id="vr"></div>
+</div>
+
+<footer>
+  <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener">GitHub</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/COMMERCIAL_LICENSE.md" target="_blank" rel="noopener">License</a>
+</footer>
+
+<script>
+  const WORKER_URL = 'https://api.trisync.dev';
+
+  async function doValidate() {
+    const input = document.getElementById('ki');
+    const result = document.getElementById('vr');
+    const key = input.value.trim().toUpperCase();
+    hide(result);
+    if (!key) return show(result, 'err', 'Please enter a license key.');
+    if (!/^TRI-[0-9A-F]{8}-[0-9A-F]{8}-[0-9A-F]{8}$/.test(key))
+      return show(result, 'err', 'Format must be TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX.');
+    show(result, 'info', 'Checking…');
+    try {
+      const resp = await fetch(WORKER_URL + '/validate', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ license_key: key })
+});
+
+      if (resp.status === 200) {
+        const d = await resp.json();
+        const st = d.status || 'unknown';
+        if (st === 'active')   show(result, 'ok',  '✓ Active. Issued: ' + (d.createdAt || '—'));
+        else if (st === 'revoked') show(result, 'err', '✗ Revoked. Reason: ' + (d.revokedReason || '—'));
+        else                   show(result, 'info', 'Status: ' + st);
+      } else if (resp.status === 404) show(result, 'err', '✗ Key not found.');
+      else if (resp.status === 429)   show(result, 'err', 'Too many requests. Try again shortly.');
+      else                            show(result, 'err', 'Error ' + resp.status + '. Try again.');
+    } catch (_) {
+      show(result, 'err', 'Could not reach the validation service.');
+    }
+  }
+
+  function show(el, cls, msg) { el.className = cls; el.textContent = msg; el.style.display = 'block'; }
+  function hide(el) { el.style.display = 'none'; }
+
+  document.getElementById('ki').addEventListener('keydown', e => { if (e.key === 'Enter') doValidate(); });
+  document.getElementById('ki').addEventListener('input',   e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''); });
+</script>
+
+</body>
+</html>

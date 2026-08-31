@@ -1,0 +1,24 @@
+{
+  "name": "@tri-sync/client",
+  "version": "1.0.0",
+  "description": "TRI-SYNC TypeScript reference client — canonical JSON, BSM encoding, SHA-256 root digest",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --loader ts-node/esm src/conformance.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

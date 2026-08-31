@@ -185,23 +185,22 @@ serialized to canonical JSON form:
    when the integer part is zero. (`0.5` is valid; `00.5` and `01.5` are invalid.)
 2. **No trailing zeros after the decimal point** — `1.5` not `1.50`; `2.0` is
    represented as integer `2`, not decimal.
-3. **No positive exponent notation** — values **MUST** be written in full decimal
-   notation unless doing so would exceed 34 significant digits (see §4.4).
-4. **Negative exponent notation** is permitted only for values where the absolute
-   value is less than `1e-6`. In this case, normalized scientific notation
-   **MUST** be used: one non-zero digit before the decimal point, followed by
-   the fractional digits, followed by `e-N`.
-5. **Sign**: Negative zero (`-0`) is forbidden. Positive sign prefix is
+3. **Always full decimal notation** — values **MUST** be written in full decimal
+   notation. Neither positive nor negative exponent notation is ever permitted in
+   canonical form. A value like `1e-7` **MUST** be stored as `0.0000001`.
+4. **Sign**: Negative zero (`-0`) is forbidden. Positive sign prefix is
    forbidden (`+1.5` is invalid; `1.5` is valid).
-6. **Infinity and NaN** are not representable and **MUST** be rejected as
+5. **Infinity and NaN** are not representable and **MUST** be rejected as
    protocol errors.
 
 ### 4.4 High-Precision Decimals
 
-For values requiring more than 34 significant digits, implementations **MUST**
-truncate (not round) to 34 significant digits and record a precision-loss flag
-in the containing event's metadata field. Precision loss does not invalidate
-an event but **MUST** be propagated to subscribers.
+Implementations **MUST** reject any decimal value whose significant-digit count
+exceeds 256 digits. Significant digits are counted after stripping all leading
+zeros. Values exceeding this limit **MUST** be rejected with `INVALID_NUMERIC`;
+no truncation, rounding, or precision-loss flag is emitted. The 256-digit limit
+is chosen to prevent denial-of-service via large-integer arithmetic while
+accommodating all practical decimal use cases.
 
 ### 4.5 Canonical JSON Object Encoding
 
@@ -209,7 +208,8 @@ When an entire BSM or event payload is serialized as a JSON object:
 
 - Keys **MUST** be UTF-8 strings ordered lexicographically (see §5).
 - No whitespace (spaces, tabs, newlines) is permitted outside of string values.
-- Unicode escape sequences **MUST** use uppercase hex digits: `\uABCD` not `\uabcd`.
+- Unicode escape sequences **MUST** use lowercase hex digits: `\u001f` not `\u001F`
+  (RFC 8785 §3.2.2).
 - Surrogate pairs **MUST** be represented as a single encoded codepoint where possible.
 - The serialization **MUST NOT** include a trailing newline or byte-order mark (BOM).
 
@@ -243,9 +243,10 @@ This ordering is:
 ### 5.3 Normalization Prohibition
 
 TRI-SYNC **MUST NOT** apply Unicode normalization (NFC, NFD, NFKC, NFKD) to
-keys before comparison or storage. Two keys that differ only in Unicode
-normalization form are considered distinct keys. Implementations **MUST NOT**
-normalize keys silently.
+keys or string values before comparison, storage, or encoding. Two strings that
+differ only in Unicode normalization form are considered **distinct** values.
+Implementations **MUST NOT** normalize keys or string values silently at any
+layer (serialization, digest computation, storage, or comparison).
 
 ### 5.4 Example Ordering
 
@@ -492,7 +493,7 @@ non-deterministic conditions.
 | `NAMESPACE_LEAK` | Event targets a key outside its declared namespace | Halt, emit `PROTOCOL_ERROR` |
 | `TYPE_MISMATCH` | Value type tag does not match the declared type for an existing key | Halt, emit `REPLAY_ERROR` |
 | `ORDER_VIOLATION` | Key in BSM serialization is out of lexicographic order | Halt, emit `REPLAY_ERROR` |
-| `DUPLICATE_EVENT` | Non-idempotent event with a previously seen digest is encountered | Skip event, emit `WARN_DUPLICATE` |
+| `DUPLICATE_EVENT` | Non-idempotent event with a previously seen digest is encountered | Halt, emit `REPLAY_ERROR` |
 
 ### 8.6 Replay Completion
 
@@ -746,13 +747,15 @@ No event type may appear after `TICK_SEAL` within the same tick.
 | `NAMESPACE_LEAK` | Key targets a foreign namespace | Fatal |
 | `TYPE_MISMATCH` | Value type inconsistent with existing key type | Fatal |
 | `ORDER_VIOLATION` | BSM keys out of lexicographic order | Fatal |
+| `DUPLICATE_EVENT` | Non-idempotent event with a previously seen digest | Fatal |
+| `TIMESTAMP_REGRESSION` | `TICK_SEAL.timestamp_ms` is less than the previous seal's timestamp | Fatal |
+| `COMPACT_FAIL` | `COMPACT` event's `snapshot_digest` does not match live state root | Fatal |
 | `KEY_NOT_FOUND` | Delete or read on non-existent key with `idempotent: false` | Error |
 | `KEY_TOO_LONG` | Key exceeds 512 bytes | Error |
 | `INVALID_KEY` | Key contains null byte or is empty | Error |
-| `QUOTA_EXCEEDED` | Write would violate a namespace quota | Error |
-| `INVALID_NUMERIC` | Decimal encoding violates canonical rules | Error |
+| `INVALID_NAMESPACE` | Namespace is reserved or contains invalid characters | Error |
+| `INVALID_NUMERIC` | Decimal encoding violates canonical rules, or digit count exceeds 256 | Error |
 | `BATCH_ROLLBACK` | One or more ops in a `STATE_BATCH` failed | Error |
-| `PRECISION_LOSS` | Decimal truncated to 34 significant digits | Warning |
 | `WARN_DUPLICATE` | Idempotent event applied more than once | Warning |
 | `INVALID_SEGMENT` | Segment header fields are malformed or inconsistent | Fatal |
 
