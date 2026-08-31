@@ -1,0 +1,52 @@
+# Root-level wrangler.toml for Workers Builds.
+# Cloudflare Workers Builds runs `npx wrangler versions upload` from the
+# repository root (/), so all paths here are relative to the repo root.
+# The canonical source of truth for local development is
+# cloudflare/worker/wrangler.toml (use `wrangler dev` from that directory).
+
+name = "tri-sync-worker"
+main = "cloudflare/worker/src/index.js"
+compatibility_date = "2026-08-29"
+
+# ---------------------------------------------------------------------------
+# Top-level (dev / local preview) — uses placeholder KV ids.
+# ---------------------------------------------------------------------------
+[[kv_namespaces]]
+binding = "ISSUED_KEYS"
+id = "REPLACE_WITH_YOUR_PREVIEW_ISSUED_KEYS_KV_NAMESPACE_ID"
+
+[[kv_namespaces]]
+binding = "MARKETING_CONTACTS"
+id = "REPLACE_WITH_YOUR_PREVIEW_MARKETING_CONTACTS_KV_NAMESPACE_ID"
+
+# ---------------------------------------------------------------------------
+# Staging environment
+# ---------------------------------------------------------------------------
+[env.staging]
+name = "tri-sync-worker-staging"
+
+[[env.staging.kv_namespaces]]
+binding = "ISSUED_KEYS"
+id = "REPLACE_WITH_YOUR_STAGING_ISSUED_KEYS_KV_NAMESPACE_ID"
+
+[[env.staging.kv_namespaces]]
+binding = "MARKETING_CONTACTS"
+id = "REPLACE_WITH_YOUR_STAGING_MARKETING_CONTACTS_KV_NAMESPACE_ID"
+
+# ---------------------------------------------------------------------------
+# Production environment
+# ---------------------------------------------------------------------------
+[env.production]
+name = "trisync-license-worker"
+# Routes are intentionally managed in the Cloudflare dashboard for
+# Workers Builds compatibility. Keep these route mappings configured there:
+#   api.trisync.dev/*, trisync.dev/marketing/*, trisync.dev/health,
+#   trisync.dev/validate, trisync.dev/webhook.
+
+[[env.production.kv_namespaces]]
+binding = "ISSUED_KEYS"
+id = "513255134bf44c74882832e17c6eed30"
+
+[[env.production.kv_namespaces]]
+binding = "MARKETING_CONTACTS"
+id = "4e6e64d6c4ee413591a2911fc2f1e4b3"
