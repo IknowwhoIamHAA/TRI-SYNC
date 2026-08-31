@@ -111,6 +111,9 @@ function jsonString(s: string): string {
  * @returns     Lowercase 64-character hex digest string.
  */
 export async function sha256Hex(data: Uint8Array<ArrayBuffer>): Promise<string> {
+  // `Uint8Array<ArrayBuffer>` (TS 5.7+) ensures a zero-offset, tightly-sized
+  // backing buffer, satisfying the `ArrayBufferView` contract required by
+  // `crypto.subtle.digest` across runtimes (Node ≥ 22, Deno, Bun, browsers).
   const buf = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(buf))
     .map(b => b.toString(16).padStart(2, '0'))
