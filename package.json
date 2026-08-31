@@ -1,0 +1,13 @@
+{
+  "name": "trisync-license-worker",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Root project for Cloudflare Pages CI",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

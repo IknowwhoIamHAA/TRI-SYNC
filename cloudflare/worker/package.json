@@ -1,11 +1,15 @@
 {
   "name": "trisync-license-worker",
   "version": "1.0.0",
-  "description": "Cloudflare Worker for TRI-SYNC license issuance and validation",
+  "description": "TRI-SYNC Cloudflare Worker — Stripe webhook → KV → Resend email",
+  "main": "src/index.js",
+  "type": "module",
   "scripts": {
+    "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
+    "deploy:production": "wrangler deploy --env production"
   },
+  "dependencies": {},
   "devDependencies": {
     "wrangler": "^3.0.0"
   }
