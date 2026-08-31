@@ -1,11 +1,5 @@
-# Root-level wrangler.toml for Workers Builds.
-# Cloudflare Workers Builds runs `npx wrangler versions upload` from the
-# repository root (/), so all paths here are relative to the repo root.
-# The canonical source of truth for local development is
-# cloudflare/worker/wrangler.toml (use `wrangler dev` from that directory).
-
-name = "tri-sync-worker"
-main = "cloudflare/worker/src/index.js"
+name = "trisync-license-worker"
+main = "cloudflare/worker/index.js"
 compatibility_date = "2026-08-29"
 
 # ---------------------------------------------------------------------------
