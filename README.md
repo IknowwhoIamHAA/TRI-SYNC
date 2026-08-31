@@ -261,6 +261,10 @@ wrangler deploy --env production
 
 `STRIPE_WEBHOOK_SECRET` is the raw `whsec_...` value from the Stripe dashboard — **not** Base64-encoded.
 
+For Workers Builds, keep custom-domain route mappings in the Cloudflare dashboard
+(instead of `wrangler.toml`) for `api.trisync.dev/*`, `trisync.dev/marketing/*`,
+`trisync.dev/health`, `trisync.dev/validate`, and `trisync.dev/webhook`.
+
 ### End-to-End Flow
 
 ```
