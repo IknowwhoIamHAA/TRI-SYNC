@@ -1,5 +1,6 @@
 {
   "name": "trisync-license-worker",
+  "private": true,
   "version": "1.0.0",
   "description": "Root project for Cloudflare Pages CI",
   "scripts": {
