@@ -8,6 +8,4 @@ pub mod key;
 pub mod license;
 pub mod replay;
 pub mod state_map;
-
-// Add this line for WASM:
 pub mod wasm;
