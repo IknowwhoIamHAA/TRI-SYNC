@@ -40,6 +40,7 @@ name = "trisync-license-worker"
 #   trisync.dev/marketing/*
 #   trisync.dev/health
 #   trisync.dev/validate
+#   trisync.dev/trial
 #   trisync.dev/webhook
 
 [[env.production.kv_namespaces]]

@@ -35,7 +35,7 @@ name = "trisync-license-worker"
 # Routes are intentionally managed in the Cloudflare dashboard for
 # Workers Builds compatibility. Keep these route mappings configured there:
 #   api.trisync.dev/*, trisync.dev/marketing/*, trisync.dev/health,
-#   trisync.dev/validate, trisync.dev/webhook.
+#   trisync.dev/validate, trisync.dev/trial, trisync.dev/webhook.
 
 [[env.production.kv_namespaces]]
 binding = "ISSUED_KEYS"

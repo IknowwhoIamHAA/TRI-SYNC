@@ -12,11 +12,12 @@ TRI‑SYNC is a portable, commercially-licensed Rust runtime that guarantees rep
 
 ### 1 — Obtain a License Key
 
-TRI-SYNC requires a commercial license for production use.
+TRI-SYNC requires a commercial license for production use. You can also request a free 7-day trial key for evaluation.
 
-**Purchase a 1-month license key ($29/month):**
+**Get a free 7-Day Trial key or purchase a 1-month license key ($29/month):**
 
 ```
+https://trisync.dev
 https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
 ```
 
@@ -106,7 +107,7 @@ Exit code `0` means the log is valid. Exit code `1` means a protocol violation w
 
 | Step | Action |
 |---|---|
-| 1 | [Purchase a 1-month license key ($29/month)](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
+| 1 | Request a free 7-day trial key or [purchase a 1-month license key ($29/month)](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
 | 2 | `export TRISYNC_LICENSE_KEY=<your-key>` |
 | 3 | Run `tri-sync <command>` |
 
@@ -235,7 +236,8 @@ handles the full Stripe → KV → Resend email pipeline for license issuance.
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/webhook` | Stripe webhook receiver (HMAC-SHA256 verified) |
-| `GET` | `/validate?key=TRI-...` | License key lookup — returns metadata JSON or 404 |
+| `POST` | `/validate` | License key validation — returns status JSON (active, expired, revoked, not_found) |
+| `POST` | `/trial` | Issue 7-day trial license key — stores metadata in KV and sends email |
 
 ### Setup
 
@@ -263,7 +265,7 @@ wrangler deploy --env production
 
 For Workers Builds, keep custom-domain route mappings in the Cloudflare dashboard
 (instead of `wrangler.toml`) for `api.trisync.dev/*`, `trisync.dev/marketing/*`,
-`trisync.dev/health`, `trisync.dev/validate`, and `trisync.dev/webhook`.
+`trisync.dev/health`, `trisync.dev/validate`, `trisync.dev/trial`, and `trisync.dev/webhook`.
 
 ### End-to-End Flow
 
