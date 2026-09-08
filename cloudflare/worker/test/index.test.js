@@ -57,6 +57,20 @@ test("request 7-day trial key", async () => {
   assert.strictEqual(valData.tier, "trial");
 });
 
+test("generates the same key for repeated trial requests", async () => {
+  const env = createMockEnv();
+  const request = () => new Request("https://api.trisync.dev/trial", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "developer@example.com" })
+  });
+
+  const first = await (await worker.fetch(request(), env)).json();
+  const second = await (await worker.fetch(request(), env)).json();
+
+  assert.strictEqual(first.license_key, second.license_key);
+});
+
 test("rejects invalid trial email", async () => {
   const env = createMockEnv();
   const req = new Request("https://api.trisync.dev/trial", {

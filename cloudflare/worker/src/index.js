@@ -241,7 +241,7 @@ async function verifyStripeSignature(payload, signature, secret) {
 /* -------------------------------------------------------------------------- */
 
 async function generateLicenseKey(sessionId, email, tier) {
-  const data = `${sessionId}:${email}:${tier}:${Date.now()}`;
+  const data = `${sessionId}:${email}:${tier}`;
   const hashBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
   const h = hex(hashBytes).toUpperCase();
   return `TRI-${h.slice(0, 8)}-${h.slice(8, 16)}-${h.slice(16, 24)}`;
@@ -294,4 +294,3 @@ function hex(buffer) {
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 }
-
