@@ -7,11 +7,12 @@ compatibility_date = "2026-08-29"
 # ---------------------------------------------------------------------------
 [[kv_namespaces]]
 binding = "ISSUED_KEYS"
-id = "REPLACE_WITH_YOUR_PREVIEW_ISSUED_KEYS_KV_NAMESPACE_ID"
+id = "513255134bf44c74882832e17c6eed30"
 
 [[kv_namespaces]]
 binding = "MARKETING_CONTACTS"
-id = "REPLACE_WITH_YOUR_PREVIEW_MARKETING_CONTACTS_KV_NAMESPACE_ID"
+id = "4e6e64d6c4ee413591a2911fc2f1e4b3"
+
 
 # ---------------------------------------------------------------------------
 # Staging environment
