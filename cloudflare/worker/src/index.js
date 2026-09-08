@@ -5,6 +5,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (request.method === "OPTIONS") {
+      return corsPreflightResponse();
+    }
+
     // Health check
     if (url.pathname === "/health") {
       return json({ status: "ok" });
@@ -285,7 +289,22 @@ async function sendLicenseEmail(email, licenseKey, tier, env) {
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "content-type": "application/json" }
+    headers: {
+      "access-control-allow-origin": "https://www.trisync.dev",
+      "content-type": "application/json"
+    }
+  });
+}
+
+function corsPreflightResponse() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "access-control-allow-origin": "https://www.trisync.dev",
+      "access-control-allow-methods": "POST, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "access-control-max-age": "86400"
+    }
   });
 }
 
@@ -294,4 +313,3 @@ function hex(buffer) {
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 }
-
