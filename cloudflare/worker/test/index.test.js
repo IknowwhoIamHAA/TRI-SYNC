@@ -22,8 +22,25 @@ test("health endpoint", async () => {
   const req = new Request("https://api.trisync.dev/health");
   const res = await worker.fetch(req, createMockEnv());
   assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.headers.get("access-control-allow-origin"), "https://www.trisync.dev");
   const data = await res.json();
   assert.strictEqual(data.status, "ok");
+});
+
+test("accepts the trial request CORS preflight", async () => {
+  const req = new Request("https://api.trisync.dev/trial", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://www.trisync.dev",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type"
+    }
+  });
+  const res = await worker.fetch(req, createMockEnv());
+  assert.strictEqual(res.status, 204);
+  assert.strictEqual(res.headers.get("access-control-allow-origin"), "https://www.trisync.dev");
+  assert.strictEqual(res.headers.get("access-control-allow-methods"), "POST, OPTIONS");
+  assert.strictEqual(res.headers.get("access-control-allow-headers"), "Content-Type");
 });
 
 test("request 7-day trial key", async () => {
