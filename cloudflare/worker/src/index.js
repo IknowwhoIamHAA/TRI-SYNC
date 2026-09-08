@@ -48,7 +48,7 @@ async function validateLicense(request, env) {
   try {
     record = JSON.parse(raw);
   } catch {
-    return json({ valid: true, status: "active" });
+    return json({ error: "invalid license record" }, 500);
   }
 
   if (record.status === "revoked") {
@@ -86,16 +86,16 @@ async function validateLicense(request, env) {
 
 async function requestTrial(request, env) {
   const body = await request.json().catch(() => null);
-  if (!body || typeof body.email !== "string" || !body.email.includes("@")) {
+  const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return json({ error: "valid email required" }, 400);
   }
 
-  const email = body.email.trim().toLowerCase();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7-day trial
 
   const tier = "trial";
-  const licenseKey = await generateLicenseKey("trial-session", email, tier);
+  const licenseKey = await generateLicenseKey(crypto.randomUUID(), email, tier);
 
   const licenseData = {
     email,
@@ -241,7 +241,7 @@ async function verifyStripeSignature(payload, signature, secret) {
 /* -------------------------------------------------------------------------- */
 
 async function generateLicenseKey(sessionId, email, tier) {
-  const data = `${sessionId}:${email}:${tier}:${Date.now()}`;
+  const data = `${sessionId}:${email}:${tier}`;
   const hashBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
   const h = hex(hashBytes).toUpperCase();
   return `TRI-${h.slice(0, 8)}-${h.slice(8, 16)}-${h.slice(16, 24)}`;
@@ -269,7 +269,7 @@ async function sendLicenseEmail(email, licenseKey, tier, env) {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${env.RESEND_API_KEY}`,
+      "Authorization": "Bearer " + env.RESEND_API_KEY,
       "Content-Type": "application/json"
     },
     body: JSON.stringify(payload)
@@ -294,4 +294,3 @@ function hex(buffer) {
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 }
-

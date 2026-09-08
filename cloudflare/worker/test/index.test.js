@@ -97,3 +97,61 @@ test("detects expired trial key", async () => {
   assert.strictEqual(valData.valid, false);
   assert.strictEqual(valData.status, "expired");
 });
+
+test("returns not_found for an unknown license key", async () => {
+  const req = new Request("https://api.trisync.dev/validate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ license_key: "TRI-11111111-22222222-33333333" })
+  });
+
+  const res = await worker.fetch(req, createMockEnv());
+  assert.strictEqual(res.status, 404);
+  assert.deepStrictEqual(await res.json(), { valid: false, status: "not_found" });
+});
+
+test("detects revoked license key", async () => {
+  const env = createMockEnv();
+  const revokedKey = "TRI-11111111-22222222-33333333";
+  await env.ISSUED_KEYS.put(
+    revokedKey,
+    JSON.stringify({
+      email: "revoked@example.com",
+      tier: "pro",
+      created_at: "2026-01-01T00:00:00.000Z",
+      status: "revoked",
+      revoked_reason: "Chargeback"
+    })
+  );
+
+  const req = new Request("https://api.trisync.dev/validate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ license_key: revokedKey })
+  });
+
+  const res = await worker.fetch(req, env);
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(await res.json(), {
+    valid: false,
+    status: "revoked",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    revokedReason: "Chargeback"
+  });
+});
+
+test("returns a server error for a malformed license record", async () => {
+  const env = createMockEnv();
+  const malformedKey = "TRI-44444444-55555555-66666666";
+  await env.ISSUED_KEYS.put(malformedKey, "{malformed");
+
+  const req = new Request("https://api.trisync.dev/validate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ license_key: malformedKey })
+  });
+
+  const res = await worker.fetch(req, env);
+  assert.strictEqual(res.status, 500);
+  assert.deepStrictEqual(await res.json(), { error: "invalid license record" });
+});

@@ -1,5 +1,5 @@
 name = "trisync-license-worker"
-main = "cloudflare/worker/index.js"
+main = "src/index.js"
 
 compatibility_date = "2026-08-29"
 

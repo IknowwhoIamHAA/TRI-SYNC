@@ -236,7 +236,7 @@ handles the full Stripe → KV → Resend email pipeline for license issuance.
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/webhook` | Stripe webhook receiver (HMAC-SHA256 verified) |
-| `POST` | `/validate` | License key validation — returns status JSON (active, expired, revoked, not_found) |
+| `POST` | `/validate` | License key validation — returns status JSON (active, expired, revoked, not_found); returns HTTP 404 for `not_found` and HTTP 200 otherwise |
 | `POST` | `/trial` | Issue 7-day trial license key — stores metadata in KV and sends email |
 
 ### Setup
