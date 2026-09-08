@@ -114,7 +114,7 @@
     cursor: pointer;
   }
   .row button:hover { opacity: .85; }
-  #vr { font-size: .85rem; padding: .65rem 1rem; border-radius: 8px; display: none; }
+  #tr, #vr { min-height: 2.8rem; font-size: .85rem; padding: .65rem 1rem; border-radius: 8px; visibility: hidden; }
   .ok   { background: rgba(34,212,126,.1);  border: 1px solid rgba(34,212,126,.3);  color: var(--green); }
   .err  { background: rgba(247,95,95,.1);   border: 1px solid rgba(247,95,95,.3);   color: var(--red); }
   .info { background: rgba(79,142,247,.1);  border: 1px solid rgba(79,142,247,.25); color: var(--accent); }
@@ -145,7 +145,7 @@
       <li>Instant trial key generation</li>
     </ul>
     <div class="btn-wrap">
-      <button class="buy-btn" style="border:none; cursor:pointer;" onclick="document.getElementById('trial-section').scrollIntoView({behavior:'smooth'})">Start Free Trial →</button>
+      <button class="buy-btn" style="border:none; cursor:pointer;" onclick="startFreeTrial()">Start Free Trial →</button>
     </div>
   </div>
 
@@ -251,8 +251,14 @@
     }
   }
 
-  function show(el, cls, msg) { el.className = cls; el.textContent = msg; el.style.display = 'block'; }
-  function hide(el) { el.style.display = 'none'; }
+  function startFreeTrial() {
+    const section = document.getElementById('trial-section');
+    section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => document.getElementById('te').focus(), 350);
+  }
+
+  function show(el, cls, msg) { el.className = cls; el.textContent = msg; el.style.visibility = 'visible'; }
+  function hide(el) { el.className = ''; el.textContent = ''; el.style.visibility = 'hidden'; }
 
   document.getElementById('te').addEventListener('keydown', e => { if (e.key === 'Enter') doRequestTrial(); });
   document.getElementById('ki').addEventListener('keydown', e => { if (e.key === 'Enter') doValidate(); });
