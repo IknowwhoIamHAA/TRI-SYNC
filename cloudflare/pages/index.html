@@ -134,6 +134,21 @@
 
 <div class="cards">
 
+  <div class="card">
+    <div class="tier">7-Day Trial</div>
+    <div class="price">$0 <span>/ 7 days</span></div>
+    <div class="desc">Free 7-day evaluation key. Full protocol features included.</div>
+    <ul class="feats">
+      <li>1 developer seat</li>
+      <li>Full feature evaluation</li>
+      <li>7-day key validity</li>
+      <li>Instant trial key generation</li>
+    </ul>
+    <div class="btn-wrap">
+      <button class="buy-btn" style="border:none; cursor:pointer;" onclick="document.getElementById('trial-section').scrollIntoView({behavior:'smooth'})">Start Free Trial →</button>
+    </div>
+  </div>
+
   <div class="card featured">
     <div class="tier">Team</div>
     <div class="price">$29 <span>/ month</span></div>
@@ -149,6 +164,16 @@
     </div>
   </div>
 
+</div>
+
+<div class="validator" id="trial-section">
+  <h2>Request a 7-Day Trial Key</h2>
+  <p>Enter your email address to instantly receive a 7-day evaluation license key.</p>
+  <div class="row">
+    <input type="email" id="te" placeholder="developer@example.com" autocomplete="off" spellcheck="false">
+    <button onclick="doRequestTrial()">Request Trial</button>
+  </div>
+  <div id="tr"></div>
 </div>
 
 <div class="validator">
@@ -170,6 +195,31 @@
 <script>
   const WORKER_URL = 'https://api.trisync.dev';
 
+  async function doRequestTrial() {
+    const input = document.getElementById('te');
+    const result = document.getElementById('tr');
+    const email = input.value.trim();
+    hide(result);
+    if (!email || !email.includes('@')) return show(result, 'err', 'Please enter a valid email address.');
+    show(result, 'info', 'Generating trial key…');
+    try {
+      const resp = await fetch(WORKER_URL + '/trial', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      if (resp.ok) {
+        const d = await resp.json();
+        show(result, 'ok', '✓ Trial key issued: ' + d.license_key + ' (Valid for 7 days)');
+      } else {
+        const d = await resp.json().catch(() => ({}));
+        show(result, 'err', d.error || 'Failed to issue trial key.');
+      }
+    } catch (_) {
+      show(result, 'err', 'Could not reach the trial service.');
+    }
+  }
+
   async function doValidate() {
     const input = document.getElementById('ki');
     const result = document.getElementById('vr');
@@ -181,15 +231,16 @@
     show(result, 'info', 'Checking…');
     try {
       const resp = await fetch(WORKER_URL + '/validate', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ license_key: key })
-});
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_key: key })
+      });
 
       if (resp.status === 200) {
         const d = await resp.json();
         const st = d.status || 'unknown';
-        if (st === 'active')   show(result, 'ok',  '✓ Active. Issued: ' + (d.createdAt || '—'));
+        if (st === 'active')   show(result, 'ok',  '✓ Active' + (d.tier ? ' (' + d.tier + ')' : '') + '. Issued: ' + (d.createdAt || '—'));
+        else if (st === 'expired') show(result, 'err', '✗ Expired. ' + (d.message || 'Key has expired.'));
         else if (st === 'revoked') show(result, 'err', '✗ Revoked. Reason: ' + (d.revokedReason || '—'));
         else                   show(result, 'info', 'Status: ' + st);
       } else if (resp.status === 404) show(result, 'err', '✗ Key not found.');
@@ -203,6 +254,7 @@
   function show(el, cls, msg) { el.className = cls; el.textContent = msg; el.style.display = 'block'; }
   function hide(el) { el.style.display = 'none'; }
 
+  document.getElementById('te').addEventListener('keydown', e => { if (e.key === 'Enter') doRequestTrial(); });
   document.getElementById('ki').addEventListener('keydown', e => { if (e.key === 'Enter') doValidate(); });
   document.getElementById('ki').addEventListener('input',   e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''); });
 </script>

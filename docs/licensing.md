@@ -21,7 +21,14 @@ If the key is missing, empty, or invalid, `tri-sync` prints a clear error and ex
 
 ### Step 1 — Obtain a License Key
 
-**Purchase a 1-month license key ($29/month):**
+**Get a free 7-Day Trial key:**
+
+Request an instant 7-day evaluation key on the landing page:
+```
+https://trisync.dev#trial-section
+```
+
+Or **purchase a 1-month Team license key ($29/month):**
 
 ```
 https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
@@ -89,6 +96,7 @@ For multi-node or containerized deployments, the recommended approach is to inje
 
 | Tier | Use Case |
 |---|---|
+| **7-Day Trial** | Free 7-day evaluation key with full feature access |
 | **Developer** | Single developer, non-production use, evaluation |
 | **Team** | Up to 10 developers, internal tooling, staging environments |
 | **Enterprise** | Unlimited developers, production deployments, SLA support |
@@ -114,10 +122,10 @@ Full terms are in [COMMERCIAL_LICENSE.md](../COMMERCIAL_LICENSE.md).
 ## FAQ
 
 **Q: Can I evaluate TRI-SYNC without a license key?**  
-A: You can build and run TRI-SYNC in a development environment with a Developer license key. Contact us for a free evaluation key.
+A: You can request a free 7-day trial license key on the landing page or build and run TRI-SYNC in a development environment with a Developer or Trial key.
 
 **Q: Does the license key expire?**  
-A: License keys may have expiry dates depending on your tier. Annual licenses are renewed each year; perpetual licenses do not expire.
+A: 7-day trial keys expire automatically after 7 days from issuance. Other license keys may have expiry dates depending on your tier. Annual licenses are renewed each year; perpetual licenses do not expire.
 
 **Q: Is TRI-SYNC open source?**  
 A: The source code is available for review and evaluation. Production use requires a commercial license. The wire protocol is open (SPEC.md is public) to allow interoperability with other conforming implementations.

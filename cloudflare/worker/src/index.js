@@ -15,6 +15,11 @@ export default {
       return validateLicense(request, env);
     }
 
+    // 7-day Trial issuance
+    if (url.pathname === "/trial" && request.method === "POST") {
+      return requestTrial(request, env);
+    }
+
     // Stripe webhook
     if (url.pathname === "/webhook" && request.method === "POST") {
       return stripeWebhook(request, env);
@@ -34,8 +39,101 @@ async function validateLicense(request, env) {
     return json({ error: "license_key required" }, 400);
   }
 
-  const stored = await env.ISSUED_KEYS.get(body.license_key);
-  return json({ valid: !!stored });
+  const raw = await env.ISSUED_KEYS.get(body.license_key);
+  if (!raw) {
+    return json({ valid: false, status: "not_found" }, 404);
+  }
+
+  let record;
+  try {
+    record = JSON.parse(raw);
+  } catch {
+    return json({ valid: true, status: "active" });
+  }
+
+  if (record.status === "revoked") {
+    return json({
+      valid: false,
+      status: "revoked",
+      createdAt: record.created_at,
+      revokedReason: record.revoked_reason || "Revoked"
+    });
+  }
+
+  if (record.expires_at && new Date(record.expires_at).getTime() < Date.now()) {
+    return json({
+      valid: false,
+      status: "expired",
+      tier: record.tier,
+      createdAt: record.created_at,
+      expiresAt: record.expires_at,
+      message: "License key has expired"
+    });
+  }
+
+  return json({
+    valid: true,
+    status: "active",
+    tier: record.tier,
+    createdAt: record.created_at,
+    expiresAt: record.expires_at || null
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                TRIAL ISSUANCE                              */
+/* -------------------------------------------------------------------------- */
+
+async function requestTrial(request, env) {
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body.email !== "string" || !body.email.includes("@")) {
+    return json({ error: "valid email required" }, 400);
+  }
+
+  const email = body.email.trim().toLowerCase();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7-day trial
+
+  const tier = "trial";
+  const licenseKey = await generateLicenseKey("trial-session", email, tier);
+
+  const licenseData = {
+    email,
+    tier,
+    created_at: now.toISOString(),
+    expires_at: expiresAt.toISOString(),
+    status: "active"
+  };
+
+  // Store license in KV
+  await env.ISSUED_KEYS.put(licenseKey, JSON.stringify(licenseData));
+
+  // Store marketing contact
+  await env.MARKETING_CONTACTS.put(
+    email,
+    JSON.stringify({
+      email,
+      tier,
+      source: "trial_request",
+      created_at: now.toISOString(),
+      expires_at: expiresAt.toISOString()
+    })
+  );
+
+  // Send license email if Resend integration is configured
+  let emailResult = { ok: false };
+  if (env.RESEND_API_KEY) {
+    emailResult = await sendLicenseEmail(email, licenseKey, tier, env);
+  }
+
+  return json({
+    ok: true,
+    license_key: licenseKey,
+    tier,
+    created_at: now.toISOString(),
+    expires_at: expiresAt.toISOString(),
+    email_sent: emailResult.ok
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -144,8 +242,9 @@ async function verifyStripeSignature(payload, signature, secret) {
 
 async function generateLicenseKey(sessionId, email, tier) {
   const data = `${sessionId}:${email}:${tier}:${Date.now()}`;
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
-  return `TS-${hex(hash).slice(0, 20).toUpperCase()}`;
+  const hashBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
+  const h = hex(hashBytes).toUpperCase();
+  return `TRI-${h.slice(0, 8)}-${h.slice(8, 16)}-${h.slice(16, 24)}`;
 }
 
 /* -------------------------------------------------------------------------- */

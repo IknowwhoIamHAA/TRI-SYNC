@@ -4,7 +4,7 @@
 //! compiled to `wasm32-unknown-unknown` and called from JS or a host
 //! runtime. For now, it’s a stub that proves the build works.
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn replay_log_status() -> u32 {
     // TODO: wire this into the real TRI-SYNC core:
     // - accept input via linear memory
