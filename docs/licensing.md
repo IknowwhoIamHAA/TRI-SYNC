@@ -23,18 +23,12 @@ If the key is missing, empty, or invalid, `tri-sync` prints a clear error and ex
 
 **Get a free 7-Day Trial key:**
 
-Request an instant 7-day evaluation key on the landing page:
-```
-https://trisync.dev#trial-section
-```
-
-Or **purchase a 1-month Team license key ($29/month):**
-
+Start a 7-day evaluation through Stripe Checkout:
 ```
 https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
 ```
 
-After completing the purchase, you will receive a license key by email.
+After completing checkout, you will receive a license key by email.
 
 ### Step 2 — Install TRI-SYNC
 
@@ -122,7 +116,7 @@ Full terms are in [COMMERCIAL_LICENSE.md](../COMMERCIAL_LICENSE.md).
 ## FAQ
 
 **Q: Can I evaluate TRI-SYNC without a license key?**  
-A: You can request a free 7-day trial license key on the landing page or build and run TRI-SYNC in a development environment with a Developer or Trial key.
+A: Start a free 7-day trial through Stripe Checkout, then receive the license key by email.
 
 **Q: Does the license key expire?**  
 A: 7-day trial keys expire automatically after 7 days from issuance. Other license keys may have expiry dates depending on your tier. Annual licenses are renewed each year; perpetual licenses do not expire.
