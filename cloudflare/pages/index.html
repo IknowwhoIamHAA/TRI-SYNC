@@ -43,6 +43,12 @@
     justify-content: center;
     width: 100%;
   }
+  .content {
+    width: 100%;
+    max-width: 760px;
+    display: grid;
+    gap: 1rem;
+  }
   .card {
     background: var(--bg2);
     border: 1px solid var(--border);
@@ -76,10 +82,8 @@
   }
   .buy-btn:hover { opacity: .85; }
 
-  /* Validator */
-  .validator {
+  .panel {
     width: 100%;
-    max-width: 480px;
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -88,36 +92,21 @@
     flex-direction: column;
     gap: 1rem;
   }
-  .validator h2 { font-size: 1rem; font-weight: 700; }
-  .validator p  { font-size: .85rem; color: var(--muted); }
-  .row { display: flex; gap: .6rem; flex-wrap: wrap; }
-  .row input {
-    flex: 1; min-width: 200px;
+  .panel h2 { font-size: 1.1rem; font-weight: 700; }
+  .panel p, .panel li { font-size: .9rem; color: var(--muted); }
+  .steps { padding-left: 1.25rem; display: grid; gap: .5rem; }
+  .command {
+    overflow-x: auto;
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: .65rem 1rem;
-    color: var(--text);
+    padding: .85rem 1rem;
     font-family: monospace;
-    font-size: .88rem;
-    outline: none;
+    color: var(--text);
+    font-size: .85rem;
   }
-  .row input:focus { border-color: var(--accent); }
-  .row button {
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: .65rem 1.25rem;
-    font-size: .88rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .row button:hover { opacity: .85; }
-  #tr, #vr { min-height: 2.8rem; font-size: .85rem; padding: .65rem 1rem; border-radius: 8px; visibility: hidden; }
-  .ok   { background: rgba(34,212,126,.1);  border: 1px solid rgba(34,212,126,.3);  color: var(--green); }
-  .err  { background: rgba(247,95,95,.1);   border: 1px solid rgba(247,95,95,.3);   color: var(--red); }
-  .info { background: rgba(79,142,247,.1);  border: 1px solid rgba(79,142,247,.25); color: var(--accent); }
+  .doc-links { display: flex; flex-wrap: wrap; gap: .75rem; }
+  .doc-links a { color: var(--accent); font-size: .9rem; font-weight: 600; }
 
   /* Footer */
   footer { font-size: .78rem; color: var(--muted); text-align: center; }
@@ -166,62 +155,49 @@
 
 </div>
 
-<div class="validator">
-  <h2>Validate your license key</h2>
-  <p>Enter your <code>TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX</code> key to confirm it is active.</p>
-  <div class="row">
-    <input type="text" id="ki" placeholder="TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX" autocomplete="off" spellcheck="false">
-    <button onclick="doValidate()">Check</button>
-  </div>
-  <div id="vr"></div>
-</div>
+<main class="content">
+  <section class="panel">
+    <h2>Build reproducible, auditable workflows</h2>
+    <p>TRI-SYNC is a deterministic Rust runtime for append-only state, cryptographic audit trails, and replayable AI and regulated-data workflows. Identical event logs produce identical state on every conforming system.</p>
+    <div class="doc-links">
+      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC#readme" target="_blank" rel="noopener">Product repository →</a>
+      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/docs/product.md" target="_blank" rel="noopener">Product overview →</a>
+      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/releases" target="_blank" rel="noopener">Releases →</a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Get started</h2>
+    <ol class="steps">
+      <li>Start a trial or subscribe through Stripe. Your product key is emailed after checkout.</li>
+      <li>Download a release or build TRI-SYNC from the product repository.</li>
+      <li>Set your key before running the CLI.</li>
+    </ol>
+    <pre class="command">export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
+tri-sync digest --input "hello"</pre>
+    <div class="doc-links">
+      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC#quick-start" target="_blank" rel="noopener">Installation guide →</a>
+      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC#cli-reference" target="_blank" rel="noopener">CLI reference →</a>
+      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/examples/basic_workflow.sh" target="_blank" rel="noopener">Workflow example →</a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Protocol and licensing</h2>
+    <p>Review the protocol specification, architecture, and commercial license before production use.</p>
+    <div class="doc-links">
+      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/SPEC.md" target="_blank" rel="noopener">Protocol specification →</a>
+      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/architecture.md" target="_blank" rel="noopener">Architecture →</a>
+      <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/docs/licensing.md" target="_blank" rel="noopener">Licensing guide →</a>
+    </div>
+  </section>
+</main>
 
 <footer>
-  <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC" target="_blank" rel="noopener">IknowwhoIamHAA/TRI-SYNC on GitHub</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/IknowwhoIamHAA/TRI-SYNC/blob/main/COMMERCIAL_LICENSE.md" target="_blank" rel="noopener">License</a>
 </footer>
-
-<script>
-  const WORKER_URL = 'https://api.trisync.dev';
-
-  async function doValidate() {
-    const input = document.getElementById('ki');
-    const result = document.getElementById('vr');
-    const key = input.value.trim().toUpperCase();
-    hide(result);
-    if (!key) return show(result, 'err', 'Please enter a license key.');
-    if (!/^TRI-[0-9A-F]{8}-[0-9A-F]{8}-[0-9A-F]{8}$/.test(key))
-      return show(result, 'err', 'Format must be TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX.');
-    show(result, 'info', 'Checking…');
-    try {
-      const resp = await fetch(WORKER_URL + '/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ license_key: key })
-      });
-
-      if (resp.status === 200) {
-        const d = await resp.json();
-        const st = d.status || 'unknown';
-        if (st === 'active')   show(result, 'ok',  '✓ Active' + (d.tier ? ' (' + d.tier + ')' : '') + '. Issued: ' + (d.createdAt || '—'));
-        else if (st === 'expired') show(result, 'err', '✗ Expired. ' + (d.message || 'Key has expired.'));
-        else if (st === 'revoked') show(result, 'err', '✗ Revoked. Reason: ' + (d.revokedReason || '—'));
-        else                   show(result, 'info', 'Status: ' + st);
-      } else if (resp.status === 404) show(result, 'err', '✗ Key not found.');
-      else if (resp.status === 429)   show(result, 'err', 'Too many requests. Try again shortly.');
-      else                            show(result, 'err', 'Error ' + resp.status + '. Try again.');
-    } catch (_) {
-      show(result, 'err', 'Could not reach the validation service.');
-    }
-  }
-
-  function show(el, cls, msg) { el.className = cls; el.textContent = msg; el.style.visibility = 'visible'; }
-  function hide(el) { el.className = ''; el.textContent = ''; el.style.visibility = 'hidden'; }
-
-  document.getElementById('ki').addEventListener('keydown', e => { if (e.key === 'Enter') doValidate(); });
-  document.getElementById('ki').addEventListener('input',   e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''); });
-</script>
 
 </body>
 </html>
