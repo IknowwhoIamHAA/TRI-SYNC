@@ -12,16 +12,15 @@ TRI‑SYNC is a portable, commercially-licensed Rust runtime that guarantees rep
 
 ### 1 — Obtain a License Key
 
-TRI-SYNC requires a commercial license for production use. You can also request a free 7-day trial key for evaluation.
+TRI-SYNC requires a commercial license for production use. A 7-day trial is available through Stripe Checkout.
 
-**Get a free 7-Day Trial key or purchase a 1-month license key ($29/month):**
+**Start a free 7-day trial or purchase a 1-month license key ($29/month):**
 
 ```
-https://trisync.dev
 https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
 ```
 
-Once you have your key:
+After Stripe Checkout, your license key is delivered by email. Then:
 
 ```bash
 export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
