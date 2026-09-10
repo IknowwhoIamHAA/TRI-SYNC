@@ -1,6 +1,8 @@
+pub mod backend;
 pub mod canonical_json;
 pub mod decimal;
 pub mod digest;
+pub mod error;
 pub mod event;
 pub mod event_log;
 pub mod hex;

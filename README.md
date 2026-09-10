@@ -72,8 +72,12 @@ tri-sync delete \
   --key job-status \
   --tick 2
 
-# Verify the log and print the final root digest (exit 1 on any protocol violation)
+# Verify the log and print the final root digest
 tri-sync verify --log events.jsonl
+
+# Resume verification from a trusted prior TICK_SEAL checkpoint root
+tri-sync verify --log events.jsonl \
+  --checkpoint-root 768e154f...
 
 # Replay the log and print final state as canonical JSON
 tri-sync replay --log events.jsonl
@@ -99,7 +103,15 @@ events=3
 root_digest=768e154f...
 ```
 
-Exit code `0` means the log is valid. Exit code `1` means a protocol violation was detected (sequence gap, digest mismatch, duplicate event, etc.).
+Exit code `0` means the log is valid.
+
+Protocol violations are emitted to `stderr` as JSON with distinct exit codes:
+
+| Exit code | Category | Examples |
+|---|---|---|
+| `4` | Sequence / digest / format | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat` |
+| `5` | Namespace isolation | `NamespaceBreach` |
+| `6` | Checkpoint / replayed state | `StateMismatch`, `MissingTickSeal` |
 
 ---
 
@@ -178,6 +190,35 @@ log.append(&event)?;
 let state = ReplayEngine::replay(&log.load()?)?;
 println!("root_digest = {}", state.root_digest_hex()?);
 ```
+
+### Custom storage backends
+
+`tri_sync::backend::EventLogBackend` isolates replay and verification logic from
+storage concerns. TRI-SYNC includes:
+
+- `FileSystemBackend` — wraps the current append-only JSONL file log
+- `InMemoryBackend` — lightweight backend for tests and rapid iteration
+
+Custom backends only need to implement:
+
+```rust
+use tri_sync::backend::EventLogBackend;
+use tri_sync::error::ProtocolViolationError;
+use tri_sync::event::Event;
+
+struct CustomBackend;
+
+impl EventLogBackend for CustomBackend {
+    fn append(&self, _event: &Event) -> Result<(), ProtocolViolationError> { Ok(()) }
+    fn load(&self) -> Result<Vec<Event>, ProtocolViolationError> { Ok(Vec::new()) }
+    fn next_sequence(&self) -> Result<u64, ProtocolViolationError> { Ok(0) }
+    fn lock_for_write(&self) -> Result<(), ProtocolViolationError> { Ok(()) }
+}
+```
+
+Checkpoint verification stores verified snapshot caches beside the log so later
+`verify --checkpoint-root <digest>` runs can replay only the tail after the
+trusted `TICK_SEAL`.
 
 Library use requires a commercial license. See [docs/licensing.md](docs/licensing.md).
 
