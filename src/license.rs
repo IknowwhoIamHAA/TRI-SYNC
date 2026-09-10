@@ -34,7 +34,7 @@ pub const LICENSE_KEYS_FILE_ENV: &str = "TRISYNC_LICENSE_KEYS_FILE";
 
 /// Require a valid commercial key for an enterprise feature.
 pub fn require_enterprise(feature: &str) -> Result<(), String> {
-    check().map_err(|err| {
+    read_key().map(|_| ()).map_err(|err| {
         format!(
             "{feature} is an enterprise feature and requires a valid {LICENSE_KEY_ENV}.\n\n{err}"
         )
@@ -284,6 +284,20 @@ mod tests {
                     .expect_err("enterprise feature should require a key");
                 assert!(err.contains("Automated compliance reporting"), "got: {err}");
                 assert!(err.contains(LICENSE_KEY_ENV), "got: {err}");
+            },
+        );
+    }
+
+    #[test]
+    fn enterprise_features_accept_an_exported_key_without_a_local_key_store() {
+        with_env_locked(
+            &[
+                (LICENSE_KEY_ENV, Some("TRI-12345678-12345678-12345678")),
+                (LICENSE_KEYS_FILE_ENV, None),
+            ],
+            || {
+                require_enterprise("Automated compliance reporting")
+                    .expect("enterprise feature should accept an exported key");
             },
         );
     }
