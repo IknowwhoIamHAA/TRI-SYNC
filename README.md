@@ -57,7 +57,7 @@ cargo build --release
 
 ```bash
 # Write a value to the append-only log
-# Local single-tenant execution is free. Add --production for licensed commercial use.
+# Local single-tenant execution is free.
 tri-sync apply \
   --log events.jsonl \
   --namespace tenant-a \
@@ -111,7 +111,7 @@ Exit code `0` means the log is valid. Exit code `1` means a protocol violation w
 |---|---|
 | 1 | Run `tri-sync verify`, `tri-sync replay`, or a local single-tenant workflow for free |
 | 2 | For enterprise features, [start a trial or subscribe](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
-| 3 | `export TRISYNC_LICENSE_KEY=<your-key>` then use `--production` or `tri-sync report` |
+| 3 | `export TRISYNC_LICENSE_KEY=<your-key>` then use enterprise features such as `tri-sync report` |
 
 If an enterprise feature is requested without a valid key, `tri-sync` prints a clear error and exits before modifying state.
 

@@ -102,7 +102,7 @@ For multi-node or containerized deployments, the recommended approach is to inje
 |---|---|---|
 | SHA-256 digest, `verify`, and `replay` | Yes | Yes |
 | Local single-tenant execution | Yes | Yes |
-| Commercial production execution (`apply` or `delete` with `--production`) | No | Yes |
+| Commercial production execution | No | Yes |
 | Automated compliance report (`tri-sync report`) | No | Yes |
 | Enterprise multi-tenant deployments | No | Yes |
 
