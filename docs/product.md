@@ -1,6 +1,6 @@
 # TRI-SYNC Product Overview
 
-**TRI-SYNC** is a deterministic, append-only runtime for reproducible AI workflows, audit trails, and regulated data pipelines. It gives finance, healthcare, insurance, government, and AI platform teams a single, portable foundation for provable state and cryptographically verifiable computation history.
+**TRI-SYNC** is a compliance-first deterministic, append-only runtime for reproducible AI workflows, unalterable provenance trails, and cryptographically auditable regulated-data pipelines. It gives finance, healthcare, insurance, government, and AI platform teams a portable foundation for provable state and tamper-evident SHA-256 computation history.
 
 ---
 
@@ -46,7 +46,7 @@ Every event carries a self-digest (SHA-256 of its canonical form) and a `prev_di
 At the end of every logical tick, a `TICK_SEAL` event records the root digest of the complete state. This creates verifiable checkpoints that any downstream node can independently confirm.
 
 ### Multi-Tenant Isolation
-Each tenant has a dedicated namespace. Namespace keys are strictly prefixed; cross-tenant reads and writes are protocol violations detected and halted at runtime.
+Each tenant has a dedicated namespace. Namespace keys are strictly prefixed; cross-tenant reads and writes are protocol violations detected and halted at runtime. Enterprise multi-tenant deployment and scaling require a commercial license; a local single-tenant workflow remains free.
 
 ### Deterministic JSON Encoding
 All event payloads use RFC 8785 canonical JSON: sorted keys, no whitespace, lowercase `\uXXXX` escapes, no locale drift. The same data always produces the same bytes, always produces the same hash.
@@ -98,6 +98,10 @@ The following guarantees are normative and cannot be broken without a major vers
 - **Isolation**: Tenant namespaces are strictly partitioned; cross-tenant access is a protocol violation.
 - **Portability**: No platform-specific encoding ambiguity; any language can implement a conforming client.
 - **Replay Safety**: Any node can reconstruct current state from genesis without external coordination.
+
+## Access Model
+
+The public core is available without a key: foundational event logging, `tri-sync verify`, `tri-sync replay`, and local single-tenant execution. Enterprise authorization through `TRISYNC_LICENSE_KEY` is required for commercial production mode and automated regulatory reporting. These controls support California AI governance-oriented audit practices; they do not constitute legal advice or a certification of compliance.
 
 ---
 
