@@ -8,8 +8,8 @@ Subject to the payment of the applicable license fee and compliance with the
 terms of this agreement, TRI-SYNC grants you a non-exclusive, non-transferable
 license to:
 
-1. Use the TRI-SYNC software ("the Software") for your internal business
-   purposes, including production deployments, subject to the tier purchased.
+1. Use the TRI-SYNC software ("the Software") for licensed enterprise features,
+   including commercial production deployments, subject to the tier purchased.
 2. Copy and install the Software on systems owned or controlled by you.
 3. Use the TRI-SYNC protocol specification (SPEC.md) to build conforming
    implementations for interoperability purposes.
@@ -24,7 +24,10 @@ You may **not**:
 3. **Reverse engineer** the Software for competitive purposes.
 4. **Remove or alter** any license notices, copyright notices, or activation
    mechanisms in the Software.
-5. **Use the Software in production** without a valid, activated license key.
+5. **Use enterprise features or the Software in commercial production** without
+   a valid, activated license key. Public verification, replay, foundational
+   event logging, and local single-tenant workflows remain available without a
+   license key.
 6. **Share, publish, or transfer** your license key(s) to any third party.
 
 ## License Key Activation
@@ -35,9 +38,9 @@ that have been shared or misused.
 
 ## Evaluation Use
 
-Evaluation use (non-production, development environments, proof-of-concept) is
-permitted under a Developer license. Contact TRI-SYNC to obtain a free
-evaluation key.
+Public verification, replay, foundational event logging, and local
+single-tenant workflows are available without a license key. A trial key is
+required only to evaluate restricted enterprise features.
 
 ## Open Protocol
 
