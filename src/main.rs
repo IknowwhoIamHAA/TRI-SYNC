@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
-use tri_sync::event::{Event, EventType, ZERO_DIGEST_HEX};
+use tri_sync::event::{BatchOpType, Event, EventType, ZERO_DIGEST_HEX};
 use tri_sync::event_log::AppendOnlyEventLog;
 use tri_sync::license;
 use tri_sync::replay::ReplayEngine;
@@ -318,14 +318,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .iter()
                 .map(|event| event.namespace.as_str())
                 .collect();
-            let write_count = events
-                .iter()
-                .filter(|event| event.event_type == EventType::StateWrite)
-                .count();
-            let delete_count = events
-                .iter()
-                .filter(|event| event.event_type == EventType::StateDelete)
-                .count();
+            let (write_count, delete_count) = state_operation_counts(&events);
             let report = serde_json::json!({
                 "schema_version": "1.0",
                 "log": log_path,
@@ -342,6 +335,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn state_operation_counts(events: &[Event]) -> (usize, usize) {
+    let mut writes = 0usize;
+    let mut deletes = 0usize;
+
+    for event in events {
+        match event.event_type {
+            EventType::StateWrite => writes += 1,
+            EventType::StateDelete => deletes += 1,
+            EventType::StateBatch => {
+                if let Some(ops) = &event.ops {
+                    for op in ops {
+                        match op.op_type {
+                            BatchOpType::StateWrite => writes += 1,
+                            BatchOpType::StateDelete => deletes += 1,
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (writes, deletes)
 }
 
 fn run_example(log_path: PathBuf) -> Result<(), Box<dyn Error>> {
@@ -389,6 +407,54 @@ fn run_example(log_path: PathBuf) -> Result<(), Box<dyn Error>> {
     println!("state={}", to_canonical_string(&state_json)?);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::state_operation_counts;
+    use tri_sync::event::{Event, ZERO_DIGEST_HEX, delete_op, write_op};
+    use tri_sync::state_map::BsmValue;
+
+    #[test]
+    fn state_operation_counts_include_batch_ops() {
+        let write = Event::state_write(
+            0,
+            0,
+            "tenant",
+            "tenant:key-a",
+            BsmValue::String("one".to_string()),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("state write should build");
+        let delete = Event::state_delete(
+            1,
+            0,
+            "tenant",
+            "tenant:key-a",
+            None,
+            true,
+            write.digest.clone(),
+        )
+        .expect("state delete should build");
+        let batch = Event::state_batch(
+            2,
+            0,
+            "tenant",
+            vec![
+                write_op("tenant:key-b", BsmValue::String("two".to_string()), false)
+                    .expect("batch write op should build"),
+                delete_op("tenant:key-b", None, true),
+            ],
+            delete.digest.clone(),
+        )
+        .expect("state batch should build");
+
+        let (writes, deletes) = state_operation_counts(&[write, delete, batch]);
+        assert_eq!(writes, 2);
+        assert_eq!(deletes, 2);
+    }
 }
 
 fn namespaced_key(namespace: &str, key: &str) -> String {
