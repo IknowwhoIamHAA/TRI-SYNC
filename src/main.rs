@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
-use tri_sync::event::{Event, ZERO_DIGEST_HEX};
+use tri_sync::event::{Event, EventType, ZERO_DIGEST_HEX};
 use tri_sync::event_log::AppendOnlyEventLog;
 use tri_sync::license;
 use tri_sync::replay::ReplayEngine;
@@ -32,6 +32,9 @@ enum Commands {
         /// Logical tick (monotonic epoch counter) for this event. Defaults to 0.
         #[arg(long, default_value_t = 0)]
         tick: u64,
+        /// Mark this write as commercial production use. Requires an enterprise license.
+        #[arg(long)]
+        production: bool,
     },
     Delete {
         #[arg(long)]
@@ -43,6 +46,9 @@ enum Commands {
         /// Logical tick (monotonic epoch counter) for this event. Defaults to 0.
         #[arg(long, default_value_t = 0)]
         tick: u64,
+        /// Mark this deletion as commercial production use. Requires an enterprise license.
+        #[arg(long)]
+        production: bool,
     },
     Replay {
         #[arg(long)]
@@ -92,15 +98,14 @@ enum Commands {
         #[arg(long)]
         log: PathBuf,
     },
+    /// Generate a machine-readable compliance report for a verified event log.
+    Report {
+        #[arg(long)]
+        log: PathBuf,
+    },
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Validate the commercial license key before running any command.
-    if let Err(msg) = license::check() {
-        eprintln!("TRI-SYNC license error:\n\n{msg}\n");
-        std::process::exit(1);
-    }
-
     let cli = Cli::parse();
 
     match cli.command {
@@ -110,7 +115,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             key,
             value,
             tick,
+            production,
         } => {
+            if production {
+                license::require_enterprise("Commercial production execution")?;
+            }
             let log = AppendOnlyEventLog::open(log);
             let events = log.load()?;
             let seq = log.next_sequence()?;
@@ -136,7 +145,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             namespace,
             key,
             tick,
+            production,
         } => {
+            if production {
+                license::require_enterprise("Commercial production execution")?;
+            }
             let log = AppendOnlyEventLog::open(log);
             let events = log.load()?;
             let seq = log.next_sequence()?;
@@ -294,6 +307,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("head_digest={head_digest}");
             println!("sealed={sealed}");
             println!("replay_ok={replay_ok}");
+        }
+        Commands::Report { log } => {
+            license::require_enterprise("Automated compliance reporting")?;
+            let log_path = log.clone();
+            let event_log = AppendOnlyEventLog::open(log);
+            let events = event_log.load()?;
+            let state = ReplayEngine::replay(&events).map_err(std::io::Error::other)?;
+            let namespaces: std::collections::BTreeSet<&str> = events
+                .iter()
+                .map(|event| event.namespace.as_str())
+                .collect();
+            let write_count = events
+                .iter()
+                .filter(|event| event.event_type == EventType::StateWrite)
+                .count();
+            let delete_count = events
+                .iter()
+                .filter(|event| event.event_type == EventType::StateDelete)
+                .count();
+            let report = serde_json::json!({
+                "schema_version": "1.0",
+                "log": log_path,
+                "verification": "passed",
+                "event_count": events.len(),
+                "namespaces": namespaces,
+                "state_writes": write_count,
+                "state_deletes": delete_count,
+                "root_digest": state.root_digest_hex().map_err(std::io::Error::other)?,
+                "digest_algorithm": "SHA-256"
+            });
+            println!("{}", to_canonical_string(&report)?);
         }
     }
 

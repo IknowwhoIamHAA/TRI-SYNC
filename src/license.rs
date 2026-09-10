@@ -1,8 +1,8 @@
 //! TRI-SYNC license validation.
 //!
-//! Every invocation of the `tri-sync` binary checks for a valid commercial
-//! license key before running any command.  The key is read from the
-//! `TRISYNC_LICENSE_KEY` environment variable.
+//! Core local verification and single-tenant workflows are available without a
+//! license. Enterprise features validate a commercial key from
+//! `TRISYNC_LICENSE_KEY`.
 //!
 //! # Valid-key store
 //!
@@ -31,6 +31,15 @@ pub const LICENSE_KEY_ENV: &str = "TRISYNC_LICENSE_KEY";
 
 /// The environment variable that overrides the path to the valid-keys file.
 pub const LICENSE_KEYS_FILE_ENV: &str = "TRISYNC_LICENSE_KEYS_FILE";
+
+/// Require a valid commercial key for an enterprise feature.
+pub fn require_enterprise(feature: &str) -> Result<(), String> {
+    check().map_err(|err| {
+        format!(
+            "{feature} is an enterprise feature and requires a valid {LICENSE_KEY_ENV}.\n\n{err}"
+        )
+    })
+}
 
 /// Check whether a valid license key is present.
 ///
@@ -174,7 +183,9 @@ mod tests {
     use std::io::Write;
     use std::sync::Mutex;
 
-    use super::{LICENSE_KEY_ENV, LICENSE_KEYS_FILE_ENV, check, parse_key_file_content};
+    use super::{
+        LICENSE_KEY_ENV, LICENSE_KEYS_FILE_ENV, check, parse_key_file_content, require_enterprise,
+    };
 
     // Serialize all env-mutating tests so they don't interfere with each other.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -260,6 +271,19 @@ mod tests {
                     err.contains(LICENSE_KEY_ENV),
                     "error should mention the env var: {err}"
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn enterprise_features_explain_the_license_requirement() {
+        with_env_locked(
+            &[(LICENSE_KEY_ENV, None), (LICENSE_KEYS_FILE_ENV, None)],
+            || {
+                let err = require_enterprise("Automated compliance reporting")
+                    .expect_err("enterprise feature should require a key");
+                assert!(err.contains("Automated compliance reporting"), "got: {err}");
+                assert!(err.contains(LICENSE_KEY_ENV), "got: {err}");
             },
         );
     }

@@ -1,7 +1,7 @@
 # **TRI‑SYNC**
-### *The deterministic AI auditability runtime. Protocol-frozen. Production-ready.*
+### *The compliance-first deterministic runtime for auditable AI and regulated workflows.*
 
-TRI‑SYNC is a portable, commercially-licensed Rust runtime that guarantees reproducible state, cryptographic audit trails, and cloud-neutral execution for AI systems, regulated data pipelines, and multi-tenant workflows. Every state transition is hashed, chained, and replayable — forever.
+TRI‑SYNC is a compliance-first Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It supports teams aligning AI workflows with California AI governance expectations and regulated-data controls.
 
 > **v1.0.0 — Protocol frozen. Production-ready.**  
 > The wire format is stable. Any two conforming implementations produce byte-for-byte identical state.
@@ -10,9 +10,9 @@ TRI‑SYNC is a portable, commercially-licensed Rust runtime that guarantees rep
 
 ## Quick Start
 
-### 1 — Obtain a License Key
+### 1 — Choose your tier
 
-TRI-SYNC requires a commercial license for production use. A 7-day trial is available through Stripe Checkout.
+Core verification, replay, and local single-tenant workflows are free without a license key. Commercial production mode, automated compliance reporting, and enterprise multi-tenant deployments require a commercial license.
 
 **Start a free 7-day trial or purchase a 1-month license key ($29/month):**
 
@@ -20,7 +20,7 @@ TRI-SYNC requires a commercial license for production use. A 7-day trial is avai
 https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
 ```
 
-After Stripe Checkout, your license key is delivered by email. Then:
+For enterprise features, Stripe Checkout delivers your license key by email. Then:
 
 ```bash
 export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
@@ -42,10 +42,9 @@ cargo build --release
 # Binary: target/release/tri-sync
 ```
 
-### 3 — Verify
+### 3 — Verify for free
 
 ```bash
-export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 ./tri-sync digest --input "hello"
 # ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 ```
@@ -54,10 +53,11 @@ export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
 
 ## CLI Reference
 
-All commands require a valid `TRISYNC_LICENSE_KEY` environment variable.
+`verify`, `replay`, and local single-tenant workflows are free. Use `TRISYNC_LICENSE_KEY` for enterprise production mode and automated compliance reporting.
 
 ```bash
 # Write a value to the append-only log
+# Local single-tenant execution is free. Add --production for licensed commercial use.
 tri-sync apply \
   --log events.jsonl \
   --namespace tenant-a \
@@ -83,6 +83,9 @@ tri-sync digest --input "hello world"
 
 # Write and replay a complete example workflow
 tri-sync example --log /tmp/example.jsonl
+
+# Generate a licensed automated compliance report
+tri-sync report --log events.jsonl
 ```
 
 `--tick` (default `0`) sets the logical tick number on the event. Ticks must be monotonically non-decreasing within a namespace.
@@ -102,15 +105,15 @@ Exit code `0` means the log is valid. Exit code `1` means a protocol violation w
 
 ## Licensing
 
-**TRI-SYNC requires a commercial license for production use.**
+**Core verification, replay, and single-tenant workflows are free. Commercial production mode, automated compliance reporting, and enterprise multi-tenant deployments require a commercial license.**
 
 | Step | Action |
 |---|---|
-| 1 | Request a free 7-day trial key or [purchase a 1-month license key ($29/month)](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
-| 2 | `export TRISYNC_LICENSE_KEY=<your-key>` |
-| 3 | Run `tri-sync <command>` |
+| 1 | Run `tri-sync verify`, `tri-sync replay`, or a local single-tenant workflow for free |
+| 2 | For enterprise features, [start a trial or subscribe](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
+| 3 | `export TRISYNC_LICENSE_KEY=<your-key>` then use `--production` or `tri-sync report` |
 
-If the key is missing or invalid, `tri-sync` prints a clear error and exits. No state is modified.
+If an enterprise feature is requested without a valid key, `tri-sync` prints a clear error and exits before modifying state.
 
 **Key store locations** (checked in order):
 1. `$TRISYNC_LICENSE_KEYS_FILE`

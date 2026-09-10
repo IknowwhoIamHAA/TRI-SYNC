@@ -1,6 +1,6 @@
 # TRI-SYNC Licensing
 
-TRI-SYNC is commercially licensed software. Use in production requires a valid license key.
+TRI-SYNC is a compliance-first deterministic runtime. Core verification, replay, and local single-tenant workflows are free without a license key. Enterprise features require a valid license key.
 
 ---
 
@@ -8,12 +8,12 @@ TRI-SYNC is commercially licensed software. Use in production requires a valid l
 
 TRI-SYNC uses a **key-based activation model**:
 
-1. **Pay** — purchase a commercial license (see below).
-2. **Receive key** — you receive a license key string (e.g., `TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX`).
-3. **Set environment variable** — export your key before running any `tri-sync` command.
-4. **Use TRI-SYNC** — run normally in production.
+1. **Use core features freely** — `verify`, `replay`, and local single-tenant execution do not require a key.
+2. **Purchase or trial enterprise features** — commercial production mode and automated compliance reporting require a license.
+3. **Receive key** — you receive a license key string (e.g., `TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX`).
+4. **Set environment variable** — export your key before using enterprise features.
 
-If the key is missing, empty, or invalid, `tri-sync` prints a clear error and exits immediately. No protocol state is modified.
+If an enterprise feature is requested without a valid key, `tri-sync` prints a clear error and exits before changing protocol state.
 
 ---
 
@@ -46,7 +46,7 @@ cargo build --release
 # Binary is at: target/release/tri-sync
 ```
 
-### Step 3 — Set Your License Key
+### Step 3 — Set Your Enterprise License Key
 
 ```bash
 export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
@@ -95,6 +95,18 @@ For multi-node or containerized deployments, the recommended approach is to inje
 | **Team** | Up to 10 developers, internal tooling, staging environments |
 | **Enterprise** | Unlimited developers, production deployments, SLA support |
 | **OEM** | Redistribution rights, embedded use in third-party products |
+
+## Feature Access
+
+| Feature | Free core | Enterprise license |
+|---|---|---|
+| SHA-256 digest, `verify`, and `replay` | Yes | Yes |
+| Local single-tenant execution | Yes | Yes |
+| Commercial production execution (`apply` or `delete` with `--production`) | No | Yes |
+| Automated compliance report (`tri-sync report`) | No | Yes |
+| Enterprise multi-tenant deployments | No | Yes |
+
+TRI-SYNC's immutable provenance, SHA-256 digest chain, and independent verification support audit workflows and California AI governance expectations. They do not by themselves certify compliance with any law or regulation.
 
 Contact [the TRI-SYNC team](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) to discuss pricing and terms for your use case.
 
