@@ -32,9 +32,6 @@ enum Commands {
         /// Logical tick (monotonic epoch counter) for this event. Defaults to 0.
         #[arg(long, default_value_t = 0)]
         tick: u64,
-        /// Mark this write as commercial production use. Requires an enterprise license.
-        #[arg(long)]
-        production: bool,
     },
     Delete {
         #[arg(long)]
@@ -46,9 +43,6 @@ enum Commands {
         /// Logical tick (monotonic epoch counter) for this event. Defaults to 0.
         #[arg(long, default_value_t = 0)]
         tick: u64,
-        /// Mark this deletion as commercial production use. Requires an enterprise license.
-        #[arg(long)]
-        production: bool,
     },
     Replay {
         #[arg(long)]
@@ -115,11 +109,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             key,
             value,
             tick,
-            production,
         } => {
-            if production {
-                license::require_enterprise("Commercial production execution")?;
-            }
             let log = AppendOnlyEventLog::open(log);
             let events = log.load()?;
             let seq = log.next_sequence()?;
@@ -145,11 +135,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             namespace,
             key,
             tick,
-            production,
         } => {
-            if production {
-                license::require_enterprise("Commercial production execution")?;
-            }
             let log = AppendOnlyEventLog::open(log);
             let events = log.load()?;
             let seq = log.next_sequence()?;
@@ -397,5 +383,81 @@ fn namespaced_key(namespace: &str, key: &str) -> String {
         key.to_string()
     } else {
         format!("{expected}{key}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::Parser;
+
+    #[test]
+    fn apply_rejects_removed_production_flag() {
+        let result = Cli::try_parse_from([
+            "tri-sync",
+            "apply",
+            "--log",
+            "events.jsonl",
+            "--namespace",
+            "tenant-a",
+            "--key",
+            "job-status",
+            "--value",
+            "running",
+            "--production",
+        ]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn delete_rejects_removed_production_flag() {
+        let result = Cli::try_parse_from([
+            "tri-sync",
+            "delete",
+            "--log",
+            "events.jsonl",
+            "--namespace",
+            "tenant-a",
+            "--key",
+            "job-status",
+            "--production",
+        ]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn apply_without_production_flag_still_parses() {
+        let cli = Cli::try_parse_from([
+            "tri-sync",
+            "apply",
+            "--log",
+            "events.jsonl",
+            "--namespace",
+            "tenant-a",
+            "--key",
+            "job-status",
+            "--value",
+            "running",
+        ])
+        .expect("apply command should parse without --production");
+
+        match cli.command {
+            Commands::Apply {
+                log,
+                namespace,
+                key,
+                value,
+                tick,
+            } => {
+                assert_eq!(log, std::path::PathBuf::from("events.jsonl"));
+                assert_eq!(namespace, "tenant-a");
+                assert_eq!(key, "job-status");
+                assert_eq!(value, "running");
+                assert_eq!(tick, 0);
+            }
+            _ => panic!("expected apply command"),
+        }
     }
 }
