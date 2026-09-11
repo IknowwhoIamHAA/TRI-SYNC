@@ -8,7 +8,7 @@ use tri_sync::errors::{
 };
 use tri_sync::event::{Event, EventType, ZERO_DIGEST_HEX};
 use tri_sync::event_log::AppendOnlyEventLog;
-use tri_sync::key::{RESERVED_SYSTEM_NAMESPACE, validate_namespace};
+use tri_sync::key::{RESERVED_SYSTEM_NAMESPACE, validate_runtime_namespace};
 use tri_sync::license;
 use tri_sync::replay::ReplayEngine;
 use tri_sync::state_map::BsmValue;
@@ -290,7 +290,18 @@ fn run() -> ProtocolResult<()> {
                     tail.next_seq,
                     tick,
                     ns,
-                    events.len() as u32,
+                    u32::try_from(events.len()).map_err(|_| {
+                        ProtocolError::new(
+                            ProtocolErrorReason::InvalidSegment,
+                            ProtocolPhase::Verify,
+                            ProtocolAction::Reject,
+                            format!(
+                                "event_count {} exceeds maximum TICK_SEAL field width",
+                                events.len()
+                            ),
+                        )
+                        .with_tick(tick)
+                    })?,
                     digest.clone(),
                     tail.prev_digest,
                     now_ms,
@@ -581,7 +592,7 @@ fn emit_protocol_error(
         return;
     };
 
-    let namespace = if validate_namespace(namespace_hint).is_ok() {
+    let namespace = if validate_runtime_namespace(namespace_hint).is_ok() {
         namespace_hint.to_string()
     } else if let Some(existing) = tail.namespace {
         existing
