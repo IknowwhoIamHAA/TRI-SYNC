@@ -17,25 +17,36 @@ impl TenantKey {
 }
 
 pub fn validate_namespace(namespace: &str) -> Result<(), String> {
+    validate_namespace_with_options(namespace, false)
+}
+
+pub fn validate_runtime_namespace(namespace: &str) -> Result<(), String> {
+    validate_namespace_with_options(namespace, true)
+}
+
+fn validate_namespace_with_options(
+    namespace: &str,
+    allow_reserved_system_namespace: bool,
+) -> Result<(), String> {
     let bytes = namespace.as_bytes();
     if !(3..=63).contains(&bytes.len()) {
-        return Err("namespace must be 3-63 bytes".to_string());
+        return Err("INVALID_NAMESPACE: namespace must be 3-63 bytes".to_string());
     }
 
     if namespace.starts_with('-') || namespace.ends_with('-') {
-        return Err("namespace may not start or end with '-'".to_string());
+        return Err("INVALID_NAMESPACE: namespace may not start or end with '-'".to_string());
     }
 
     for b in bytes {
         let valid = b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-';
         if !valid {
-            return Err("namespace must match [a-z0-9-]".to_string());
+            return Err("INVALID_NAMESPACE: namespace must match [a-z0-9-]".to_string());
         }
     }
 
-    if namespace == RESERVED_SYSTEM_NAMESPACE {
+    if !allow_reserved_system_namespace && namespace == RESERVED_SYSTEM_NAMESPACE {
         return Err(format!(
-            "namespace '{RESERVED_SYSTEM_NAMESPACE}' is reserved and may not be used by tenants"
+            "INVALID_NAMESPACE: namespace '{RESERVED_SYSTEM_NAMESPACE}' is reserved and may not be used by tenants"
         ));
     }
 
@@ -44,13 +55,13 @@ pub fn validate_namespace(namespace: &str) -> Result<(), String> {
 
 pub fn validate_key(namespace: &str, key: &str) -> Result<(), String> {
     if key.is_empty() {
-        return Err("key must not be empty".to_string());
+        return Err("INVALID_KEY: key must not be empty".to_string());
     }
     if key.len() > 512 {
-        return Err("key must be <=512 bytes".to_string());
+        return Err("INVALID_KEY: key must be <=512 bytes".to_string());
     }
     if key.as_bytes().contains(&0) {
-        return Err("key must not contain null byte".to_string());
+        return Err("INVALID_KEY: key must not contain null byte".to_string());
     }
 
     let expected = format!("{namespace}:");
@@ -60,7 +71,9 @@ pub fn validate_key(namespace: &str, key: &str) -> Result<(), String> {
 
     let suffix = &key[expected.len()..];
     if suffix.is_empty() || suffix.starts_with(':') {
-        return Err("key suffix must be non-empty and may not start with ':'".to_string());
+        return Err(
+            "INVALID_KEY: key suffix must be non-empty and may not start with ':'".to_string(),
+        );
     }
 
     Ok(())

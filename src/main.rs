@@ -1,11 +1,14 @@
-use std::error::Error;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
+use tri_sync::errors::{
+    ProtocolAction, ProtocolError, ProtocolErrorReason, ProtocolPhase, ProtocolResult,
+};
 use tri_sync::event::{Event, EventType, ZERO_DIGEST_HEX};
 use tri_sync::event_log::AppendOnlyEventLog;
+use tri_sync::key::{RESERVED_SYSTEM_NAMESPACE, validate_namespace};
 use tri_sync::license;
 use tri_sync::replay::ReplayEngine;
 use tri_sync::state_map::BsmValue;
@@ -29,10 +32,8 @@ enum Commands {
         key: String,
         #[arg(long)]
         value: String,
-        /// Logical tick (monotonic epoch counter) for this event. Defaults to 0.
         #[arg(long, default_value_t = 0)]
         tick: u64,
-        /// Mark this write as commercial production use. Requires an enterprise license.
         #[arg(long)]
         production: bool,
     },
@@ -43,10 +44,8 @@ enum Commands {
         namespace: String,
         #[arg(long)]
         key: String,
-        /// Logical tick (monotonic epoch counter) for this event. Defaults to 0.
         #[arg(long, default_value_t = 0)]
         tick: u64,
-        /// Mark this deletion as commercial production use. Requires an enterprise license.
         #[arg(long)]
         production: bool,
     },
@@ -54,28 +53,19 @@ enum Commands {
         #[arg(long)]
         log: PathBuf,
     },
-    /// Verify an event log: replay from genesis, print the final root digest,
-    /// and exit 0 on success or 1 if the log is invalid.
     Verify {
         #[arg(long)]
         log: PathBuf,
-        /// After a successful verify, append a TICK_SEAL checkpoint event to the
-        /// log.  The seal records the current root digest and event count so that
-        /// subsequent verify runs can confirm no events were added or modified.
         #[arg(long)]
         seal: bool,
-        /// Logical tick to use for the appended TICK_SEAL (only used with --seal).
         #[arg(long, default_value_t = 0)]
         tick: u64,
-        /// Namespace for the appended TICK_SEAL (only used with --seal).
         #[arg(long, default_value = "")]
         namespace: String,
     },
-    /// Export the full event log as a JSON array to stdout.
     Export {
         #[arg(long)]
         log: PathBuf,
-        /// Output format.  Currently only "json" is supported.
         #[arg(long, default_value = "json")]
         format: String,
     },
@@ -87,25 +77,37 @@ enum Commands {
         #[arg(long)]
         log: PathBuf,
     },
-    /// Print a human-readable summary of every event in a log file.
     Inspect {
         #[arg(long)]
         log: PathBuf,
     },
-    /// Print a one-line status summary of a log file: event count, head digest,
-    /// sealed/unsealed, and whether replay passes.
     Status {
         #[arg(long)]
         log: PathBuf,
     },
-    /// Generate a machine-readable compliance report for a verified event log.
     Report {
         #[arg(long)]
         log: PathBuf,
     },
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() {
+    let exit_code = match run() {
+        Ok(()) => 0,
+        Err(err) => {
+            report_failure(&err);
+            match err.code() {
+                "LICENSE_REQUIRED" => 3,
+                "UNSUPPORTED_FORMAT" | "IO_ERROR" => 2,
+                _ => 1,
+            }
+        }
+    };
+
+    std::process::exit(exit_code);
+}
+
+fn run() -> ProtocolResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -118,26 +120,47 @@ fn main() -> Result<(), Box<dyn Error>> {
             production,
         } => {
             if production {
-                license::require_enterprise("Commercial production execution")?;
+                license::require_enterprise("Commercial production execution")
+                    .map_err(|err| license_error("Commercial production execution", err))?;
             }
+
             let log = AppendOnlyEventLog::open(log);
-            let events = log.load()?;
-            let seq = log.next_sequence()?;
-            let prev = events
-                .last()
-                .map_or(ZERO_DIGEST_HEX.to_string(), |event| event.digest.clone());
+            let tail = log
+                .tail_metadata()
+                .map_err(|err| io_error(ProtocolPhase::Append, err))?;
+            let seq = tail.next_seq;
+            let prev = tail.prev_digest.clone();
             let key = namespaced_key(&namespace, &key);
             let event = Event::state_write(
                 seq,
                 tick,
-                namespace,
+                namespace.clone(),
                 key,
                 BsmValue::Bytes(value.into_bytes()),
                 false,
                 prev,
                 None,
-            )?;
-            log.append(&event)?;
+            )
+            .map_err(|err| {
+                ProtocolError::from_message(ProtocolPhase::Append, ProtocolAction::Reject, err)
+                    .with_namespace(namespace.clone())
+                    .with_seq(seq)
+                    .with_tick(tick)
+            })?;
+
+            if let Err(err) = log.append(&event) {
+                let protocol_error = ProtocolError::from_message(
+                    ProtocolPhase::Append,
+                    ProtocolAction::Reject,
+                    err.to_string(),
+                )
+                .with_namespace(namespace.clone())
+                .with_seq(seq)
+                .with_tick(tick);
+                emit_protocol_error(&log, &namespace, tick, &protocol_error);
+                return Err(protocol_error);
+            }
+
             println!("appended STATE_WRITE at seq {}", event.seq);
         }
         Commands::Delete {
@@ -148,25 +171,65 @@ fn main() -> Result<(), Box<dyn Error>> {
             production,
         } => {
             if production {
-                license::require_enterprise("Commercial production execution")?;
+                license::require_enterprise("Commercial production execution")
+                    .map_err(|err| license_error("Commercial production execution", err))?;
             }
+
             let log = AppendOnlyEventLog::open(log);
-            let events = log.load()?;
-            let seq = log.next_sequence()?;
-            let prev = events
-                .last()
-                .map_or(ZERO_DIGEST_HEX.to_string(), |event| event.digest.clone());
+            let tail = log
+                .tail_metadata()
+                .map_err(|err| io_error(ProtocolPhase::Append, err))?;
+            let seq = tail.next_seq;
+            let prev = tail.prev_digest.clone();
             let key = namespaced_key(&namespace, &key);
-            let event = Event::state_delete(seq, tick, namespace, key, None, true, prev)?;
-            log.append(&event)?;
+            let event = Event::state_delete(seq, tick, namespace.clone(), key, None, true, prev)
+                .map_err(|err| {
+                    ProtocolError::from_message(ProtocolPhase::Append, ProtocolAction::Reject, err)
+                        .with_namespace(namespace.clone())
+                        .with_seq(seq)
+                        .with_tick(tick)
+                })?;
+
+            if let Err(err) = log.append(&event) {
+                let protocol_error = ProtocolError::from_message(
+                    ProtocolPhase::Append,
+                    ProtocolAction::Reject,
+                    err.to_string(),
+                )
+                .with_namespace(namespace.clone())
+                .with_seq(seq)
+                .with_tick(tick);
+                emit_protocol_error(&log, &namespace, tick, &protocol_error);
+                return Err(protocol_error);
+            }
+
             println!("appended STATE_DELETE at seq {}", event.seq);
         }
         Commands::Replay { log } => {
             let log = AppendOnlyEventLog::open(log);
-            let events = log.load()?;
-            let state = ReplayEngine::replay(&events).map_err(std::io::Error::other)?;
-            let json_value = serde_json::to_value(state.to_json_value())?;
-            println!("{}", to_canonical_string(&json_value)?);
+            let events = log
+                .load()
+                .map_err(|err| io_error(ProtocolPhase::Replay, err))?;
+            let state = ReplayEngine::replay(&events)?;
+            let json_value = serde_json::to_value(state.to_json_value()).map_err(|err| {
+                ProtocolError::new(
+                    ProtocolErrorReason::IoError,
+                    ProtocolPhase::Replay,
+                    ProtocolAction::Halt,
+                    err.to_string(),
+                )
+            })?;
+            println!(
+                "{}",
+                to_canonical_string(&json_value).map_err(|err| {
+                    ProtocolError::new(
+                        ProtocolErrorReason::IoError,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Halt,
+                        err,
+                    )
+                })?
+            );
         }
         Commands::Verify {
             log,
@@ -177,14 +240,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let log_path = log.clone();
             let log = AppendOnlyEventLog::open(log);
             let events = log.load().map_err(|err| {
-                eprintln!(
-                    "VERIFY FAILED: could not load log {}: {err}",
-                    log_path.display()
-                );
-                std::process::exit(1);
+                io_error(
+                    ProtocolPhase::Verify,
+                    format!("could not load log {}: {err}", log_path.display()),
+                )
             })?;
 
-            // Warn when the log does not end with a TICK_SEAL checkpoint.
             let ends_with_seal = events
                 .last()
                 .map(|e| e.event_type == tri_sync::event::EventType::TickSeal)
@@ -193,69 +254,102 @@ fn main() -> Result<(), Box<dyn Error>> {
                 eprintln!("WARNING: log does not end with a TICK_SEAL checkpoint");
             }
 
-            match ReplayEngine::replay(&events) {
-                Ok(state) => match state.root_digest_hex() {
-                    Ok(digest) => {
-                        println!("OK");
-                        println!("log={}", log_path.display());
-                        println!("events={}", events.len());
-                        println!("root_digest={digest}");
+            let state = ReplayEngine::replay(&events).map_err(|err| {
+                err.with_namespace(
+                    events
+                        .first()
+                        .map(|event| event.namespace.clone())
+                        .unwrap_or_else(|| RESERVED_SYSTEM_NAMESPACE.to_string()),
+                )
+            })?;
+            let digest = state.root_digest_hex().map_err(|err| {
+                ProtocolError::from_message(ProtocolPhase::Verify, ProtocolAction::Halt, err)
+            })?;
+            println!("OK");
+            println!("log={}", log_path.display());
+            println!("events={}", events.len());
+            println!("root_digest={digest}");
 
-                        if seal {
-                            let ns = if namespace.is_empty() {
-                                events
-                                    .first()
-                                    .map(|e| e.namespace.clone())
-                                    .unwrap_or_else(|| "trisync-system".to_string())
-                            } else {
-                                namespace
-                            };
-                            let seq = log.next_sequence()?;
-                            let prev = events
-                                .last()
-                                .map_or(ZERO_DIGEST_HEX.to_string(), |e| e.digest.clone());
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_millis() as u64)
-                                .unwrap_or(0);
-                            let seal_event = Event::tick_seal(
-                                seq,
-                                tick,
-                                ns,
-                                events.len() as u32,
-                                digest.clone(),
-                                prev,
-                                now_ms,
-                            )?;
-                            log.append(&seal_event)?;
-                            println!("seal_seq={}", seal_event.seq);
-                            println!("seal_digest={}", seal_event.digest);
-                        }
-                    }
-                    Err(err) => {
-                        eprintln!("VERIFY FAILED: root digest error: {err}");
-                        std::process::exit(1);
-                    }
-                },
-                Err(err) => {
-                    eprintln!("VERIFY FAILED: replay error: {err}");
-                    std::process::exit(1);
-                }
+            if seal {
+                let ns = if namespace.is_empty() {
+                    events
+                        .first()
+                        .map(|e| e.namespace.clone())
+                        .unwrap_or_else(|| RESERVED_SYSTEM_NAMESPACE.to_string())
+                } else {
+                    namespace
+                };
+                let tail = log
+                    .tail_metadata()
+                    .map_err(|err| io_error(ProtocolPhase::Verify, err))?;
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let seal_event = Event::tick_seal(
+                    tail.next_seq,
+                    tick,
+                    ns,
+                    events.len() as u32,
+                    digest.clone(),
+                    tail.prev_digest,
+                    now_ms,
+                )
+                .map_err(|err| {
+                    ProtocolError::from_message(ProtocolPhase::Verify, ProtocolAction::Reject, err)
+                        .with_tick(tick)
+                })?;
+                log.append(&seal_event)
+                    .map_err(|err| io_error(ProtocolPhase::Verify, err))?;
+                println!("seal_seq={}", seal_event.seq);
+                println!("seal_digest={}", seal_event.digest);
             }
         }
         Commands::Export { log, format } => {
             if format != "json" {
-                eprintln!("Unsupported format '{}'. Only 'json' is supported.", format);
-                std::process::exit(1);
+                return Err(ProtocolError::new(
+                    ProtocolErrorReason::UnsupportedFormat,
+                    ProtocolPhase::Input,
+                    ProtocolAction::Reject,
+                    format!("unsupported format '{format}'. Only 'json' is supported."),
+                )
+                .with_actual(format));
             }
             let log = AppendOnlyEventLog::open(log);
-            let events = log.load()?;
+            let events = log
+                .load()
+                .map_err(|err| io_error(ProtocolPhase::Report, err))?;
             let arr: Vec<serde_json::Value> = events
                 .iter()
                 .map(serde_json::to_value)
-                .collect::<Result<_, _>>()?;
-            let json = serde_json::to_value(arr)?;
-            println!("{}", to_canonical_string(&json)?);
+                .collect::<Result<_, _>>()
+                .map_err(|err| {
+                    ProtocolError::new(
+                        ProtocolErrorReason::IoError,
+                        ProtocolPhase::Report,
+                        ProtocolAction::Halt,
+                        err.to_string(),
+                    )
+                })?;
+            let json = serde_json::to_value(arr).map_err(|err| {
+                ProtocolError::new(
+                    ProtocolErrorReason::IoError,
+                    ProtocolPhase::Report,
+                    ProtocolAction::Halt,
+                    err.to_string(),
+                )
+            })?;
+            println!(
+                "{}",
+                to_canonical_string(&json).map_err(|err| {
+                    ProtocolError::new(
+                        ProtocolErrorReason::IoError,
+                        ProtocolPhase::Report,
+                        ProtocolAction::Halt,
+                        err,
+                    )
+                })?
+            );
         }
         Commands::Digest { input } => {
             println!("{}", sha256_hex(input.as_bytes()));
@@ -265,7 +359,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Inspect { log } => {
             let event_log = AppendOnlyEventLog::open(log);
-            let events = event_log.load()?;
+            let events = event_log
+                .load()
+                .map_err(|err| io_error(ProtocolPhase::Report, err))?;
             if events.is_empty() {
                 println!("(empty log)");
             } else {
@@ -291,7 +387,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::Status { log } => {
             let log_path = log.clone();
             let event_log = AppendOnlyEventLog::open(log);
-            let events = event_log.load()?;
+            let events = event_log
+                .load()
+                .map_err(|err| io_error(ProtocolPhase::Report, err))?;
             let count = events.len();
             let head_digest = events
                 .last()
@@ -309,11 +407,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("replay_ok={replay_ok}");
         }
         Commands::Report { log } => {
-            license::require_enterprise("Automated compliance reporting")?;
+            license::require_enterprise("Automated compliance reporting")
+                .map_err(|err| license_error("Automated compliance reporting", err))?;
             let log_path = log.clone();
             let event_log = AppendOnlyEventLog::open(log);
-            let events = event_log.load()?;
-            let state = ReplayEngine::replay(&events).map_err(std::io::Error::other)?;
+            let events = event_log
+                .load()
+                .map_err(|err| io_error(ProtocolPhase::Report, err))?;
+            let state = ReplayEngine::replay(&events)?;
             let namespaces: std::collections::BTreeSet<&str> = events
                 .iter()
                 .map(|event| event.namespace.as_str())
@@ -334,20 +435,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "namespaces": namespaces,
                 "state_writes": write_count,
                 "state_deletes": delete_count,
-                "root_digest": state.root_digest_hex().map_err(std::io::Error::other)?,
+                "root_digest": state.root_digest_hex().map_err(|err| ProtocolError::from_message(ProtocolPhase::Report, ProtocolAction::Halt, err))?,
                 "digest_algorithm": "SHA-256"
             });
-            println!("{}", to_canonical_string(&report)?);
+            println!(
+                "{}",
+                to_canonical_string(&report).map_err(|err| {
+                    ProtocolError::new(
+                        ProtocolErrorReason::IoError,
+                        ProtocolPhase::Report,
+                        ProtocolAction::Halt,
+                        err,
+                    )
+                })?
+            );
         }
     }
 
     Ok(())
 }
 
-fn run_example(log_path: PathBuf) -> Result<(), Box<dyn Error>> {
-    if log_path.exists() {
-        std::fs::remove_file(&log_path)?;
-    }
+fn run_example(log_path: PathBuf) -> ProtocolResult<()> {
+    cleanup_log_artifacts(&log_path).map_err(|err| io_error(ProtocolPhase::Append, err))?;
 
     let log = AppendOnlyEventLog::open(&log_path);
 
@@ -360,8 +469,12 @@ fn run_example(log_path: PathBuf) -> Result<(), Box<dyn Error>> {
         false,
         ZERO_DIGEST_HEX,
         None,
-    )?;
-    log.append(&first)?;
+    )
+    .map_err(|err| {
+        ProtocolError::from_message(ProtocolPhase::Append, ProtocolAction::Reject, err)
+    })?;
+    log.append(&first)
+        .map_err(|err| io_error(ProtocolPhase::Append, err))?;
 
     let second = Event::state_write(
         1,
@@ -372,21 +485,52 @@ fn run_example(log_path: PathBuf) -> Result<(), Box<dyn Error>> {
         false,
         first.digest.clone(),
         None,
+    )
+    .map_err(|err| {
+        ProtocolError::from_message(ProtocolPhase::Append, ProtocolAction::Reject, err)
+    })?;
+    log.append(&second)
+        .map_err(|err| io_error(ProtocolPhase::Append, err))?;
+
+    let seal_state = ReplayEngine::replay(
+        &log.load()
+            .map_err(|err| io_error(ProtocolPhase::Replay, err))?,
     )?;
-    log.append(&second)?;
+    let root_digest = seal_state.root_digest_hex().map_err(|err| {
+        ProtocolError::from_message(ProtocolPhase::Replay, ProtocolAction::Halt, err)
+    })?;
+    let seal = Event::tick_seal(2, 0, "tenant-a", 2, root_digest, second.digest.clone(), 0)
+        .map_err(|err| {
+            ProtocolError::from_message(ProtocolPhase::Append, ProtocolAction::Reject, err)
+        })?;
+    log.append(&seal)
+        .map_err(|err| io_error(ProtocolPhase::Append, err))?;
 
-    let seal_state = ReplayEngine::replay(&log.load()?).map_err(std::io::Error::other)?;
-    let root_digest = seal_state
-        .root_digest_hex()
-        .map_err(std::io::Error::other)?;
-    let seal = Event::tick_seal(2, 0, "tenant-a", 2, root_digest, second.digest.clone(), 0)?;
-    log.append(&seal)?;
-
-    let state = ReplayEngine::replay(&log.load()?).map_err(std::io::Error::other)?;
-    let state_json = serde_json::to_value(state.to_json_value())?;
+    let state = ReplayEngine::replay(
+        &log.load()
+            .map_err(|err| io_error(ProtocolPhase::Replay, err))?,
+    )?;
+    let state_json = serde_json::to_value(state.to_json_value()).map_err(|err| {
+        ProtocolError::new(
+            ProtocolErrorReason::IoError,
+            ProtocolPhase::Replay,
+            ProtocolAction::Halt,
+            err.to_string(),
+        )
+    })?;
 
     println!("log={}", log.path().display());
-    println!("state={}", to_canonical_string(&state_json)?);
+    println!(
+        "state={}",
+        to_canonical_string(&state_json).map_err(|err| {
+            ProtocolError::new(
+                ProtocolErrorReason::IoError,
+                ProtocolPhase::Replay,
+                ProtocolAction::Halt,
+                err,
+            )
+        })?
+    );
 
     Ok(())
 }
@@ -398,4 +542,87 @@ fn namespaced_key(namespace: &str, key: &str) -> String {
     } else {
         format!("{expected}{key}")
     }
+}
+
+fn report_failure(err: &ProtocolError) {
+    let value = err.to_json_value();
+    if let Ok(rendered) = to_canonical_string(&value) {
+        eprintln!("{rendered}");
+    } else {
+        eprintln!("{err}");
+    }
+}
+
+fn io_error(phase: ProtocolPhase, err: impl ToString) -> ProtocolError {
+    ProtocolError::new(
+        ProtocolErrorReason::IoError,
+        phase,
+        ProtocolAction::Halt,
+        err.to_string(),
+    )
+}
+
+fn license_error(feature: &str, err: impl ToString) -> ProtocolError {
+    ProtocolError::new(
+        ProtocolErrorReason::LicenseRequired,
+        ProtocolPhase::License,
+        ProtocolAction::Reject,
+        format!("{feature}: {}", err.to_string()),
+    )
+}
+
+fn emit_protocol_error(
+    log: &AppendOnlyEventLog,
+    namespace_hint: &str,
+    tick: u64,
+    err: &ProtocolError,
+) {
+    let Ok(tail) = log.tail_metadata() else {
+        return;
+    };
+
+    let namespace = if validate_namespace(namespace_hint).is_ok() {
+        namespace_hint.to_string()
+    } else if let Some(existing) = tail.namespace {
+        existing
+    } else {
+        RESERVED_SYSTEM_NAMESPACE.to_string()
+    };
+
+    let detail = Some(err.message.clone());
+    let offending_seq = err.offending_seq.or(err.seq);
+    let event = Event::protocol_error(
+        tail.next_seq,
+        tick,
+        namespace,
+        err.code().to_string(),
+        offending_seq,
+        detail,
+        tail.prev_digest,
+    );
+    if let Ok(event) = event {
+        let _ = log.append(&event);
+    }
+}
+
+fn cleanup_log_artifacts(log_path: &PathBuf) -> Result<(), std::io::Error> {
+    let artifacts = [
+        log_path.clone(),
+        PathBuf::from(format!("{}.catalog.json", log_path.display())),
+        PathBuf::from(format!("{}.catalog.tmp", log_path.display())),
+        PathBuf::from(format!("{}.lock", log_path.display())),
+    ];
+
+    for artifact in artifacts {
+        if artifact.exists() {
+            let _ = std::fs::remove_file(artifact);
+        }
+    }
+
+    let segments_dir = PathBuf::from(format!("{}.segments", log_path.display()));
+    if segments_dir.exists() {
+        let _ = std::fs::remove_dir_all(segments_dir);
+    }
+
+    Ok(())
 }

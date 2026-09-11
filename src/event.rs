@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use crate::canonical_json::to_canonical_string;
 use crate::decimal::validate_decimal;
 use crate::digest::sha256_hex;
-use crate::key::{validate_key, validate_namespace};
+use crate::key::{validate_key, validate_namespace, validate_runtime_namespace};
 use crate::state_map::BsmValue;
 
 pub const ZERO_DIGEST_HEX: &str =
@@ -115,7 +115,7 @@ impl Event {
         let namespace = namespace.into();
         let key = key.into();
 
-        validate_namespace(&namespace)?;
+        validate_runtime_namespace(&namespace)?;
         validate_key(&namespace, &key)?;
 
         let (value_type, value_json) = bsm_value_to_event_value(&value)?;
@@ -161,7 +161,7 @@ impl Event {
         let namespace = namespace.into();
         let key = key.into();
 
-        validate_namespace(&namespace)?;
+        validate_runtime_namespace(&namespace)?;
         validate_key(&namespace, &key)?;
 
         let mut event = Self {
@@ -201,7 +201,7 @@ impl Event {
         prev_digest: impl Into<String>,
     ) -> Result<Self, String> {
         let namespace = namespace.into();
-        validate_namespace(&namespace)?;
+        validate_runtime_namespace(&namespace)?;
         for op in &ops {
             validate_key(&namespace, &op.key)?;
         }

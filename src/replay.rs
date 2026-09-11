@@ -1,5 +1,8 @@
 use std::collections::HashSet;
 
+use crate::errors::{
+    ProtocolAction, ProtocolError, ProtocolErrorReason, ProtocolPhase, ProtocolResult,
+};
 use crate::event::{BatchOpType, Event, EventType, event_value_to_bsm};
 use crate::key::validate_key;
 use crate::state_map::{BinaryStateMap, BsmValue, StateSnapshot};
@@ -13,42 +16,48 @@ pub struct ReplayOutcome {
 pub struct ReplayEngine;
 
 impl ReplayEngine {
-    pub fn replay(events: &[Event]) -> Result<BinaryStateMap, String> {
+    pub fn replay(events: &[Event]) -> ProtocolResult<BinaryStateMap> {
         Ok(Self::replay_with_snapshot(events, None)?.state)
     }
 
     pub fn replay_with_snapshot(
         events: &[Event],
         snapshot: Option<StateSnapshot>,
-    ) -> Result<ReplayOutcome, String> {
+    ) -> ProtocolResult<ReplayOutcome> {
         if snapshot.is_none() && events.first().is_some_and(|event| event.seq != 0) {
-            return Err(format!(
-                "SEQ_GAP: replay without snapshot must start at seq 0, got {}",
-                events.first().map_or(0, |event| event.seq)
-            ));
+            return Err(ProtocolError::new(
+                ProtocolErrorReason::SeqGap,
+                ProtocolPhase::Replay,
+                ProtocolAction::Halt,
+                format!(
+                    "replay without snapshot must start at seq 0, got {}",
+                    events.first().map_or(0, |event| event.seq)
+                ),
+            )
+            .with_expected("0")
+            .with_actual(events.first().map_or(0, |event| event.seq).to_string()));
         }
 
         let has_snapshot = snapshot.is_some();
         let snapshot_namespace = snapshot.as_ref().map(|snap| snap.namespace.clone());
-        let mut state = if let Some(snapshot) = snapshot {
-            snapshot.state
+        let snapshot_prev_digest = snapshot
+            .as_ref()
+            .map(|snap| crate::hex::encode_hex(&snap.seal_digest));
+        let mut state = if let Some(snapshot) = &snapshot {
+            snapshot.state.clone()
         } else {
             BinaryStateMap::new()
         };
 
         let mut warnings = Vec::new();
         let mut expected_seq = if has_snapshot {
-            events.first().map_or(0, |first| first.seq)
+            snapshot.as_ref().map_or(0, |snap| snap.seal_seq + 1)
         } else {
             0
         };
 
         let mut expected_prev_digest = if has_snapshot {
-            events
-                .first()
-                .map_or(crate::event::ZERO_DIGEST_HEX.to_string(), |first| {
-                    first.prev_digest.clone()
-                })
+            snapshot_prev_digest.unwrap_or_else(|| crate::event::ZERO_DIGEST_HEX.to_string())
         } else {
             crate::event::ZERO_DIGEST_HEX.to_string()
         };
@@ -58,31 +67,62 @@ impl ReplayEngine {
             snapshot_namespace.or_else(|| events.first().map(|event| event.namespace.clone()));
 
         // Fix 6: track the timestamp of the last TICK_SEAL to enforce monotonicity.
-        let mut last_seal_timestamp_ms: Option<u64> = None;
+        let mut last_seal_timestamp_ms = snapshot.as_ref().map(|snap| snap.seal_timestamp_ms);
         // Track highest non-zero tick seen to detect tick regressions.
-        let mut max_tick_seen: u64 = 0;
+        let mut max_tick_seen = snapshot.as_ref().map_or(0, |snap| snap.tick);
 
         for event in events {
             if let Some(namespace) = &expected_namespace {
                 if &event.namespace != namespace {
-                    return Err(format!(
-                        "NAMESPACE_LEAK: mixed replay namespaces (expected {}, got {})",
-                        namespace, event.namespace
-                    ));
+                    return Err(ProtocolError::new(
+                        ProtocolErrorReason::NamespaceLeak,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Quarantine,
+                        format!(
+                            "mixed replay namespaces (expected {}, got {})",
+                            namespace, event.namespace
+                        ),
+                    )
+                    .with_namespace(namespace.clone())
+                    .with_actual(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick));
                 }
             } else {
                 expected_namespace = Some(event.namespace.clone());
             }
 
             if event.seq != expected_seq {
-                return Err(format!(
-                    "SEQ_GAP: expected seq {}, got {}",
-                    expected_seq, event.seq
-                ));
+                return Err(ProtocolError::new(
+                    ProtocolErrorReason::SeqGap,
+                    ProtocolPhase::Replay,
+                    ProtocolAction::Halt,
+                    format!("expected seq {}, got {}", expected_seq, event.seq),
+                )
+                .with_expected(expected_seq.to_string())
+                .with_actual(event.seq.to_string())
+                .with_namespace(event.namespace.clone())
+                .with_seq(event.seq)
+                .with_tick(event.tick));
             }
 
-            event.validate_prev_digest(&expected_prev_digest)?;
-            event.validate_digest()?;
+            event
+                .validate_prev_digest(&expected_prev_digest)
+                .map_err(|err| {
+                    ProtocolError::from_message(ProtocolPhase::Replay, ProtocolAction::Halt, err)
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                        .with_expected(expected_prev_digest.clone())
+                        .with_actual(event.prev_digest.clone())
+                })?;
+            event.validate_digest().map_err(|err| {
+                ProtocolError::from_message(ProtocolPhase::Replay, ProtocolAction::Halt, err)
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick)
+                    .with_actual(event.digest.clone())
+            })?;
 
             // Fix 9: non-idempotent duplicates are now hard errors instead of warnings.
             if !seen_digests.insert(event.digest.clone()) {
@@ -96,23 +136,46 @@ impl ReplayEngine {
                     continue;
                 }
 
-                return Err(format!(
-                    "DUPLICATE_EVENT: non-idempotent duplicate detected at seq {}",
-                    event.seq
-                ));
+                return Err(ProtocolError::new(
+                    ProtocolErrorReason::DuplicateEvent,
+                    ProtocolPhase::Replay,
+                    ProtocolAction::Halt,
+                    format!("non-idempotent duplicate detected at seq {}", event.seq),
+                )
+                .with_namespace(event.namespace.clone())
+                .with_seq(event.seq)
+                .with_tick(event.tick));
             }
 
             // Fix 6: enforce TICK_SEAL timestamp monotonicity before applying the event.
             if event.event_type == EventType::TickSeal {
                 let ts = event.timestamp_ms.ok_or_else(|| {
-                    format!("TICK_SEAL missing timestamp_ms at seq {}", event.seq)
+                    ProtocolError::new(
+                        ProtocolErrorReason::InvalidSegment,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Halt,
+                        format!("TICK_SEAL missing timestamp_ms at seq {}", event.seq),
+                    )
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick)
                 })?;
                 if let Some(prev_ts) = last_seal_timestamp_ms {
                     if ts < prev_ts {
-                        return Err(format!(
-                            "TIMESTAMP_REGRESSION: TICK_SEAL at seq {} has timestamp {ts} < previous {prev_ts}",
-                            event.seq
-                        ));
+                        return Err(ProtocolError::new(
+                            ProtocolErrorReason::TimestampRegression,
+                            ProtocolPhase::Replay,
+                            ProtocolAction::Halt,
+                            format!(
+                                "TICK_SEAL at seq {} has timestamp {ts} < previous {prev_ts}",
+                                event.seq
+                            ),
+                        )
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                        .with_expected(prev_ts.to_string())
+                        .with_actual(ts.to_string()));
                     }
                 }
                 last_seal_timestamp_ms = Some(ts);
@@ -122,10 +185,20 @@ impl ReplayEngine {
             // highest non-zero tick previously seen in the log.
             if event.tick > 0 {
                 if event.tick < max_tick_seen {
-                    return Err(format!(
-                        "TICK_REGRESSION: event at seq {} has tick {} < previous max tick {}",
-                        event.seq, event.tick, max_tick_seen
-                    ));
+                    return Err(ProtocolError::new(
+                        ProtocolErrorReason::TickRegression,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Halt,
+                        format!(
+                            "event at seq {} has tick {} < previous max tick {}",
+                            event.seq, event.tick, max_tick_seen
+                        ),
+                    )
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick)
+                    .with_expected(max_tick_seen.to_string())
+                    .with_actual(event.tick.to_string()));
                 }
                 max_tick_seen = event.tick;
             }
@@ -139,60 +212,188 @@ impl ReplayEngine {
         Ok(ReplayOutcome { state, warnings })
     }
 
-    fn apply_event(state: &mut BinaryStateMap, event: &Event) -> Result<(), String> {
+    fn apply_event(state: &mut BinaryStateMap, event: &Event) -> ProtocolResult<()> {
         match event.event_type {
             EventType::StateWrite => {
-                let key = event
-                    .key
-                    .as_deref()
-                    .ok_or_else(|| "STATE_WRITE missing key".to_string())?;
-                validate_key(&event.namespace, key)?;
+                let key = event.key.as_deref().ok_or_else(|| {
+                    ProtocolError::new(
+                        ProtocolErrorReason::InvalidSegment,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Halt,
+                        "STATE_WRITE missing key",
+                    )
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick)
+                })?;
+                validate_key(&event.namespace, key).map_err(|err| {
+                    ProtocolError::from_message(ProtocolPhase::Replay, ProtocolAction::Halt, err)
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                })?;
 
                 let value = event
-                    .state_write_value()?
-                    .ok_or_else(|| "STATE_WRITE missing value payload".to_string())?;
+                    .state_write_value()
+                    .map_err(|err| {
+                        ProtocolError::from_message(
+                            ProtocolPhase::Replay,
+                            ProtocolAction::Halt,
+                            err,
+                        )
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                    })?
+                    .ok_or_else(|| {
+                        ProtocolError::new(
+                            ProtocolErrorReason::InvalidSegment,
+                            ProtocolPhase::Replay,
+                            ProtocolAction::Halt,
+                            "STATE_WRITE missing value payload",
+                        )
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                    })?;
 
-                state.set_validated(key.to_string(), value)
+                state.set_validated(key.to_string(), value).map_err(|err| {
+                    ProtocolError::from_message(ProtocolPhase::Replay, ProtocolAction::Halt, err)
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                })
             }
             EventType::StateDelete => {
-                let key = event
-                    .key
-                    .as_deref()
-                    .ok_or_else(|| "STATE_DELETE missing key".to_string())?;
-                validate_key(&event.namespace, key)?;
+                let key = event.key.as_deref().ok_or_else(|| {
+                    ProtocolError::new(
+                        ProtocolErrorReason::InvalidSegment,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Halt,
+                        "STATE_DELETE missing key",
+                    )
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick)
+                })?;
+                validate_key(&event.namespace, key).map_err(|err| {
+                    ProtocolError::from_message(ProtocolPhase::Replay, ProtocolAction::Halt, err)
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                })?;
 
                 if state.get(key).is_none() && !event.idempotent.unwrap_or(false) {
-                    return Err(format!("KEY_NOT_FOUND: {}", key));
+                    return Err(ProtocolError::new(
+                        ProtocolErrorReason::KeyNotFound,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Reject,
+                        key.to_string(),
+                    )
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick));
                 }
 
-                state.delete(&event.namespace, key)?;
+                state.delete(&event.namespace, key).map_err(|err| {
+                    ProtocolError::from_message(ProtocolPhase::Replay, ProtocolAction::Halt, err)
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                })?;
                 Ok(())
             }
             EventType::StateBatch => {
-                let ops = event
-                    .ops
-                    .as_ref()
-                    .ok_or_else(|| "STATE_BATCH missing ops".to_string())?;
+                let ops = event.ops.as_ref().ok_or_else(|| {
+                    ProtocolError::new(
+                        ProtocolErrorReason::InvalidSegment,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Halt,
+                        "STATE_BATCH missing ops",
+                    )
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick)
+                })?;
                 let mut staged = state.clone();
                 for op in ops {
-                    validate_key(&event.namespace, &op.key)?;
+                    validate_key(&event.namespace, &op.key).map_err(|err| {
+                        ProtocolError::from_message(
+                            ProtocolPhase::Replay,
+                            ProtocolAction::Halt,
+                            err,
+                        )
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                    })?;
                     match op.op_type {
                         BatchOpType::StateWrite => {
-                            let value_type = op
-                                .value_type
-                                .ok_or_else(|| "STATE_WRITE op missing value_type".to_string())?;
-                            let raw = op
-                                .value
-                                .as_ref()
-                                .ok_or_else(|| "STATE_WRITE op missing value".to_string())?;
-                            let value = event_value_to_bsm(value_type, raw)?;
-                            staged.set_validated(op.key.clone(), value)?;
+                            let value_type = op.value_type.ok_or_else(|| {
+                                ProtocolError::new(
+                                    ProtocolErrorReason::InvalidSegment,
+                                    ProtocolPhase::Replay,
+                                    ProtocolAction::Halt,
+                                    "STATE_WRITE op missing value_type",
+                                )
+                                .with_namespace(event.namespace.clone())
+                                .with_seq(event.seq)
+                                .with_tick(event.tick)
+                            })?;
+                            let raw = op.value.as_ref().ok_or_else(|| {
+                                ProtocolError::new(
+                                    ProtocolErrorReason::InvalidSegment,
+                                    ProtocolPhase::Replay,
+                                    ProtocolAction::Halt,
+                                    "STATE_WRITE op missing value",
+                                )
+                                .with_namespace(event.namespace.clone())
+                                .with_seq(event.seq)
+                                .with_tick(event.tick)
+                            })?;
+                            let value = event_value_to_bsm(value_type, raw).map_err(|err| {
+                                ProtocolError::from_message(
+                                    ProtocolPhase::Replay,
+                                    ProtocolAction::Halt,
+                                    err,
+                                )
+                                .with_namespace(event.namespace.clone())
+                                .with_seq(event.seq)
+                                .with_tick(event.tick)
+                            })?;
+                            staged.set_validated(op.key.clone(), value).map_err(|err| {
+                                ProtocolError::from_message(
+                                    ProtocolPhase::Replay,
+                                    ProtocolAction::Halt,
+                                    err,
+                                )
+                                .with_namespace(event.namespace.clone())
+                                .with_seq(event.seq)
+                                .with_tick(event.tick)
+                            })?;
                         }
                         BatchOpType::StateDelete => {
                             if staged.get(&op.key).is_none() && !op.idempotent {
-                                return Err(format!("KEY_NOT_FOUND: {}", op.key));
+                                return Err(ProtocolError::new(
+                                    ProtocolErrorReason::KeyNotFound,
+                                    ProtocolPhase::Replay,
+                                    ProtocolAction::Reject,
+                                    op.key.clone(),
+                                )
+                                .with_namespace(event.namespace.clone())
+                                .with_seq(event.seq)
+                                .with_tick(event.tick));
                             }
-                            staged.delete(&event.namespace, &op.key)?;
+                            staged.delete(&event.namespace, &op.key).map_err(|err| {
+                                ProtocolError::from_message(
+                                    ProtocolPhase::Replay,
+                                    ProtocolAction::Halt,
+                                    err,
+                                )
+                                .with_namespace(event.namespace.clone())
+                                .with_seq(event.seq)
+                                .with_tick(event.tick)
+                            })?;
                         }
                     }
                 }
@@ -200,33 +401,75 @@ impl ReplayEngine {
                 Ok(())
             }
             EventType::TickSeal => {
-                let expected_root = event
-                    .root_digest
-                    .as_ref()
-                    .ok_or_else(|| "TICK_SEAL missing root_digest".to_string())?;
-                let current_root = state.root_digest_hex()?;
+                let expected_root = event.root_digest.as_ref().ok_or_else(|| {
+                    ProtocolError::new(
+                        ProtocolErrorReason::InvalidSegment,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Halt,
+                        "TICK_SEAL missing root_digest",
+                    )
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick)
+                })?;
+                let current_root = state.root_digest_hex().map_err(|err| {
+                    ProtocolError::from_message(ProtocolPhase::Replay, ProtocolAction::Halt, err)
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                })?;
                 if &current_root != expected_root {
-                    return Err(format!(
-                        "TICK_SEAL_FAIL: expected root {}, got {}",
-                        expected_root, current_root
-                    ));
+                    return Err(ProtocolError::new(
+                        ProtocolErrorReason::TickSealFail,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Halt,
+                        format!("expected root {}, got {}", expected_root, current_root),
+                    )
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick)
+                    .with_expected(expected_root.clone())
+                    .with_actual(current_root));
                 }
                 Ok(())
             }
             // Fix 10: COMPACT verifies snapshot integrity and acts as a checkpoint.
             // The compacted state must match the snapshot_digest stored in the event.
             EventType::Compact => {
-                let snapshot_digest = event
-                    .snapshot_digest
-                    .as_deref()
-                    .ok_or_else(|| "COMPACT missing snapshot_digest".to_string())?;
-                let current_root = state.root_digest_hex()?;
+                let snapshot_digest = event.snapshot_digest.as_deref().ok_or_else(|| {
+                    ProtocolError::new(
+                        ProtocolErrorReason::InvalidSegment,
+                        ProtocolPhase::Replay,
+                        ProtocolAction::Halt,
+                        "COMPACT missing snapshot_digest",
+                    )
+                    .with_namespace(event.namespace.clone())
+                    .with_seq(event.seq)
+                    .with_tick(event.tick)
+                })?;
+                let current_root = state.root_digest_hex().map_err(|err| {
+                    ProtocolError::from_message(ProtocolPhase::Replay, ProtocolAction::Halt, err)
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                })?;
                 if current_root != snapshot_digest {
-                    return Err(format!(
-                        "COMPACT_FAIL: current state root {current_root} does not match \
-                         snapshot_digest {snapshot_digest} at seq {}",
-                        event.seq
-                    ));
+                    return Err(
+                        ProtocolError::new(
+                            ProtocolErrorReason::CompactFail,
+                            ProtocolPhase::Replay,
+                            ProtocolAction::Halt,
+                            format!(
+                                "current state root {current_root} does not match snapshot_digest {snapshot_digest} at seq {}",
+                                event.seq
+                            ),
+                        )
+                        .with_namespace(event.namespace.clone())
+                        .with_seq(event.seq)
+                        .with_tick(event.tick)
+                        .with_expected(snapshot_digest.to_string())
+                        .with_actual(current_root),
+                    );
                 }
                 Ok(())
             }
@@ -241,10 +484,15 @@ impl ReplayEngine {
                     .as_deref()
                     .map(|d| format!(": {d}"))
                     .unwrap_or_default();
-                Err(format!(
-                    "PROTOCOL_ERROR at seq {}: {error_code}{detail}",
-                    event.seq
-                ))
+                Err(ProtocolError::new(
+                    ProtocolErrorReason::ProtocolError,
+                    ProtocolPhase::Replay,
+                    ProtocolAction::Halt,
+                    format!("at seq {}: {error_code}{detail}", event.seq),
+                )
+                .with_namespace(event.namespace.clone())
+                .with_seq(event.seq)
+                .with_tick(event.tick))
             }
         }
     }
@@ -265,7 +513,7 @@ impl ReplayEngine {
 #[cfg(test)]
 mod tests {
     use crate::event::{Event, ZERO_DIGEST_HEX};
-    use crate::state_map::BsmValue;
+    use crate::state_map::{BsmValue, StateSnapshot};
 
     use super::ReplayEngine;
 
@@ -314,7 +562,7 @@ mod tests {
         .expect("state write create");
 
         let err = ReplayEngine::replay(&[event]).expect_err("replay should fail");
-        assert!(err.contains("SEQ_GAP"));
+        assert_eq!(err.code(), "SEQ_GAP");
     }
 
     #[test]
@@ -342,7 +590,7 @@ mod tests {
         )
         .expect("state write create");
         let err = ReplayEngine::replay(&[first, second]).expect_err("replay should fail");
-        assert!(err.contains("NAMESPACE_LEAK"));
+        assert_eq!(err.code(), "NAMESPACE_LEAK");
     }
 
     #[test]
@@ -370,7 +618,7 @@ mod tests {
         )
         .expect("state write create");
         let err = ReplayEngine::replay(&[first, second]).expect_err("replay should fail");
-        assert!(err.contains("TYPE_MISMATCH"));
+        assert_eq!(err.code(), "TYPE_MISMATCH");
     }
 
     #[test]
@@ -464,7 +712,7 @@ mod tests {
 
         let err = ReplayEngine::replay(&[write, seal1, write2, seal2])
             .expect_err("regressing timestamp should fail");
-        assert!(err.contains("TIMESTAMP_REGRESSION"), "got: {err}");
+        assert_eq!(err.code(), "TIMESTAMP_REGRESSION", "got: {err}");
     }
 
     #[test]
@@ -555,7 +803,7 @@ mod tests {
             ReplayEngine::replay(&[first, tampered]).expect_err("tampered log must be rejected");
         // DIGEST_MISMATCH fires first (stronger/earlier guard), which is correct.
         assert!(
-            err.contains("DIGEST_MISMATCH"),
+            err.code() == "DIGEST_MISMATCH",
             "expected DIGEST_MISMATCH from tampered log, got: {err}"
         );
     }
@@ -628,8 +876,8 @@ mod tests {
 
         let err = ReplayEngine::replay(&[write, protocol_err])
             .expect_err("PROTOCOL_ERROR must halt replay");
-        assert!(err.contains("PROTOCOL_ERROR"), "got: {err}");
-        assert!(err.contains("INVALID_PAYLOAD"), "got: {err}");
+        assert_eq!(err.code(), "PROTOCOL_ERROR", "got: {err}");
+        assert!(err.message.contains("INVALID_PAYLOAD"), "got: {err}");
     }
 
     // Fix 10: COMPACT verifies snapshot_digest
@@ -699,7 +947,7 @@ mod tests {
 
         let err =
             ReplayEngine::replay(&[write, compact]).expect_err("wrong snapshot digest should fail");
-        assert!(err.contains("COMPACT_FAIL"), "got: {err}");
+        assert_eq!(err.code(), "COMPACT_FAIL", "got: {err}");
     }
 
     // -------------------------------------------------------------------------
@@ -733,7 +981,7 @@ mod tests {
 
         let err =
             ReplayEngine::replay(&[first, second]).expect_err("tick regression should be rejected");
-        assert!(err.contains("TICK_REGRESSION"), "got: {err}");
+        assert_eq!(err.code(), "TICK_REGRESSION", "got: {err}");
     }
 
     #[test]
@@ -792,5 +1040,132 @@ mod tests {
 
         ReplayEngine::replay(&[first, second])
             .expect("zero tick after non-zero tick must not cause TICK_REGRESSION");
+    }
+
+    #[test]
+    fn snapshot_resume_requires_matching_checkpoint_digest() {
+        let first = Event::state_write(
+            0,
+            7,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+
+        let mut state = crate::state_map::BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+            .expect("set");
+        let root = state.root_digest_hex().expect("root");
+
+        let seal =
+            Event::tick_seal(1, 7, "tenant-a", 1, root, first.digest.clone(), 700).expect("seal");
+
+        let root_bytes = crate::hex::decode_hex(&state.root_digest_hex().expect("root digest hex"))
+            .expect("decode root");
+        let mut root_digest = [0u8; 32];
+        root_digest.copy_from_slice(&root_bytes);
+
+        let mut wrong_seal_digest = [0u8; 32];
+        wrong_seal_digest[0] = 1;
+        let snapshot = StateSnapshot {
+            namespace: "tenant-a".to_string(),
+            tick: 7,
+            seal_seq: 1,
+            seal_timestamp_ms: 700,
+            root_digest,
+            seal_digest: wrong_seal_digest,
+            state,
+        };
+
+        let resumed = Event::state_write(
+            2,
+            8,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(2),
+            false,
+            seal.digest.clone(),
+            None,
+        )
+        .expect("resumed");
+
+        let err = ReplayEngine::replay_with_snapshot(&[resumed], Some(snapshot))
+            .expect_err("resume should fail");
+        assert_eq!(err.code(), "DIGEST_MISMATCH");
+    }
+
+    #[test]
+    fn snapshot_resume_carries_prior_seal_timestamp_and_tick() {
+        let mut state = crate::state_map::BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+            .expect("set");
+        let root_bytes = crate::hex::decode_hex(&state.root_digest_hex().expect("root digest hex"))
+            .expect("decode root");
+        let mut root_digest = [0u8; 32];
+        root_digest.copy_from_slice(&root_bytes);
+
+        let seal = Event::tick_seal(
+            1,
+            9,
+            "tenant-a",
+            1,
+            state.root_digest_hex().expect("root"),
+            ZERO_DIGEST_HEX,
+            900,
+        )
+        .expect("seal");
+        let seal_bytes = crate::hex::decode_hex(&seal.digest).expect("decode seal");
+        let mut seal_digest = [0u8; 32];
+        seal_digest.copy_from_slice(&seal_bytes);
+
+        let snapshot = StateSnapshot {
+            namespace: "tenant-a".to_string(),
+            tick: 9,
+            seal_seq: 1,
+            seal_timestamp_ms: 900,
+            root_digest,
+            seal_digest,
+            state,
+        };
+
+        let resumed_write = Event::state_write(
+            2,
+            10,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(2),
+            false,
+            seal.digest.clone(),
+            None,
+        )
+        .expect("resumed write");
+
+        let resumed_seal = Event::tick_seal(
+            3,
+            10,
+            "tenant-a",
+            1,
+            {
+                let mut next_state = crate::state_map::BinaryStateMap::new();
+                next_state
+                    .set("tenant-a", "tenant-a:key", BsmValue::Integer(2))
+                    .expect("next set");
+                next_state.root_digest_hex().expect("next root")
+            },
+            resumed_write.digest.clone(),
+            800,
+        )
+        .expect("resumed seal");
+
+        let err =
+            ReplayEngine::replay_with_snapshot(&[resumed_write, resumed_seal], Some(snapshot))
+                .expect_err("timestamp regression across snapshot boundary should fail");
+        assert_eq!(err.code(), "TIMESTAMP_REGRESSION");
     }
 }

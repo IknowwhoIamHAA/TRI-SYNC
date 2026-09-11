@@ -110,7 +110,10 @@ impl TransactionalStateMap {
 pub struct StateSnapshot {
     pub namespace: String,
     pub tick: u64,
+    pub seal_seq: u64,
+    pub seal_timestamp_ms: u64,
     pub root_digest: [u8; 32],
+    pub seal_digest: [u8; 32],
     pub state: BinaryStateMap,
 }
 
@@ -309,7 +312,10 @@ impl StateSnapshot {
         out.extend_from_slice(&(self.namespace.len() as u16).to_be_bytes());
         out.extend_from_slice(self.namespace.as_bytes());
         out.extend_from_slice(&self.tick.to_be_bytes());
+        out.extend_from_slice(&self.seal_seq.to_be_bytes());
+        out.extend_from_slice(&self.seal_timestamp_ms.to_be_bytes());
         out.extend_from_slice(&self.root_digest);
+        out.extend_from_slice(&self.seal_digest);
         out.extend_from_slice(&self.state.to_binary()?);
         Ok(out)
     }
@@ -320,8 +326,12 @@ impl StateSnapshot {
         let namespace = String::from_utf8(read_exact(bytes, &mut cursor, namespace_len)?.to_vec())
             .map_err(|_| "snapshot namespace must be UTF-8".to_string())?;
         let tick = read_u64(bytes, &mut cursor)?;
+        let seal_seq = read_u64(bytes, &mut cursor)?;
+        let seal_timestamp_ms = read_u64(bytes, &mut cursor)?;
         let mut root_digest = [0u8; 32];
         root_digest.copy_from_slice(read_exact(bytes, &mut cursor, 32)?);
+        let mut seal_digest = [0u8; 32];
+        seal_digest.copy_from_slice(read_exact(bytes, &mut cursor, 32)?);
 
         let state = BinaryStateMap::from_binary(&bytes[cursor..])?;
         for key in state.inner.keys() {
@@ -336,7 +346,10 @@ impl StateSnapshot {
         Ok(Self {
             namespace,
             tick,
+            seal_seq,
+            seal_timestamp_ms,
             root_digest,
+            seal_digest,
             state,
         })
     }
@@ -529,7 +542,10 @@ mod tests {
         let snapshot = StateSnapshot {
             namespace: "tenant-a".to_string(),
             tick: 7,
+            seal_seq: 8,
+            seal_timestamp_ms: 7000,
             root_digest: root_digest_array,
+            seal_digest: [7u8; 32],
             state,
         };
 
@@ -580,7 +596,10 @@ mod tests {
         let snapshot = StateSnapshot {
             namespace: "tenant-a".to_string(),
             tick: 1,
+            seal_seq: 1,
+            seal_timestamp_ms: 1000,
             root_digest,
+            seal_digest: [1u8; 32],
             state,
         };
         let err = snapshot
@@ -605,7 +624,10 @@ mod tests {
         let snapshot = StateSnapshot {
             namespace: "tenant-a".to_string(),
             tick: 1,
+            seal_seq: 1,
+            seal_timestamp_ms: 1000,
             root_digest: root_digest_array,
+            seal_digest: [1u8; 32],
             state,
         };
         let err = snapshot
