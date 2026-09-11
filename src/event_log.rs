@@ -168,7 +168,7 @@ impl AppendOnlyEventLog {
         if self.catalog_path().exists() {
             let catalog = self.read_catalog()?;
             let mut events = Vec::new();
-            for segment in &catalog.segments {
+            for segment in self.ordered_segments(&catalog)? {
                 events.extend(self.load_segment_events(segment)?);
             }
             return Ok(events);
@@ -321,7 +321,7 @@ impl AppendOnlyEventLog {
             .map(|segment| segment.header().digest_hex())
             .transpose()?;
         let created_at = current_time_ms()?;
-        let segment_id = format!("seg-{}-{}", event.seq, created_at);
+        let segment_id = self.next_segment_id(catalog, event.seq);
         let file_name = format!("{segment_id}.jsonl");
         let entry = SegmentCatalogEntry {
             segment_id: segment_id.clone(),
@@ -533,6 +533,32 @@ impl AppendOnlyEventLog {
         self.segments_dir().join(file_name)
     }
 
+    fn ordered_segments<'a>(
+        &self,
+        catalog: &'a SegmentCatalog,
+    ) -> Result<Vec<&'a SegmentCatalogEntry>, Box<dyn Error>> {
+        let mut segments: Vec<&SegmentCatalogEntry> = catalog.segments.iter().collect();
+        segments.sort_by_key(|segment| segment.seq_start);
+
+        for window in segments.windows(2) {
+            let first = window[0];
+            let second = window[1];
+            if second.seq_start <= first.seq_end {
+                return Err(format!(
+                    "INVALID_SEGMENT: overlapping or unsorted segments {}..{} then {}..{}",
+                    first.seq_start, first.seq_end, second.seq_start, second.seq_end
+                )
+                .into());
+            }
+        }
+
+        Ok(segments)
+    }
+
+    fn next_segment_id(&self, catalog: &SegmentCatalog, seq_start: u64) -> String {
+        format!("seg-{seq_start}-{}", catalog.segments.len())
+    }
+
     fn roll_segment_if_needed_for_dir(
         &self,
         catalog: &mut SegmentCatalog,
@@ -562,7 +588,7 @@ impl AppendOnlyEventLog {
             .map(|segment| segment.header().digest_hex())
             .transpose()?;
         let created_at = current_time_ms()?;
-        let segment_id = format!("seg-{}-{}", event.seq, created_at);
+        let segment_id = self.next_segment_id(catalog, event.seq);
         let file_name = format!("{segment_id}.jsonl");
         let entry = SegmentCatalogEntry {
             segment_id: segment_id.clone(),
