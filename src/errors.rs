@@ -183,6 +183,9 @@ impl ProtocolError {
             "INVALID_SEGMENT" => ProtocolErrorReason::InvalidSegment,
             "STATE_LOCK_POISON" => ProtocolErrorReason::StateLockPoison,
             "PROTOCOL_ERROR" => ProtocolErrorReason::ProtocolError,
+            "IO_ERROR" => ProtocolErrorReason::IoError,
+            "LICENSE_REQUIRED" => ProtocolErrorReason::LicenseRequired,
+            "UNSUPPORTED_FORMAT" => ProtocolErrorReason::UnsupportedFormat,
             _ => ProtocolErrorReason::IoError,
         };
 
