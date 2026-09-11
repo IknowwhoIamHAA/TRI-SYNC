@@ -105,7 +105,18 @@ enum Commands {
     },
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() {
+    if let Err(err) = run() {
+        if let Some(violation) = err.downcast_ref::<tri_sync::error::ProtocolViolationError>() {
+            eprintln!("{}", violation.to_json_line());
+            std::process::exit(violation.exit_code);
+        }
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     match cli.command {

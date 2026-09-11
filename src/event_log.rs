@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::canonical_json::to_canonical_string;
 use crate::digest::sha256_hex;
+use crate::error::ProtocolViolationError;
 use crate::event::{Event, ZERO_DIGEST_HEX};
 
 const SEGMENT_PREFIX: &str = "#SEGMENT ";
@@ -80,9 +81,12 @@ impl AppendOnlyEventLog {
 
         let expected_seq = last_event.as_ref().map_or(0, |last| last.seq + 1);
         if event.seq != expected_seq {
-            return Err(
-                format!("SEQ_GAP: expected seq {}, got {}", expected_seq, event.seq).into(),
-            );
+            let err = if event.seq < expected_seq {
+                ProtocolViolationError::sequence_collision(event.namespace.clone(), event.seq)
+            } else {
+                ProtocolViolationError::sequence_gap(expected_seq, event.seq)
+            };
+            return Err(Box::new(err));
         }
 
         let expected_prev = last_event
@@ -93,7 +97,10 @@ impl AppendOnlyEventLog {
 
         if let Some(last) = &last_event {
             if last.namespace != event.namespace {
-                return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
+                return Err(Box::new(ProtocolViolationError::namespace_breach(
+                    last.namespace.clone(),
+                    event.namespace.clone(),
+                )));
             }
         }
 
@@ -254,6 +261,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use crate::error::ProtocolViolationError;
     use crate::event::{Event, ZERO_DIGEST_HEX};
     use crate::state_map::BsmValue;
 
@@ -354,6 +362,101 @@ mod tests {
             header_after_second.seq_end, 1,
             "seq_end must be updated to 1 after second append"
         );
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("lock"));
+    }
+
+    #[test]
+    fn sequence_collision_returns_protocol_violation_error() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tri-sync-collision-{unique}.jsonl"));
+
+        let log = AppendOnlyEventLog::open(&path);
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        log.append(&first).expect("append first");
+
+        let mut collision = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("collision");
+        collision.refresh_digest().expect("refresh");
+
+        let err = log
+            .append(&collision)
+            .expect_err("must fail with collision");
+        let violation = err
+            .downcast_ref::<ProtocolViolationError>()
+            .expect("must be ProtocolViolationError");
+        assert_eq!(violation.code, "SEQUENCE_COLLISION");
+        assert_eq!(violation.exit_code, 7);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("lock"));
+    }
+
+    #[test]
+    fn namespace_breach_returns_protocol_violation_error() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tri-sync-namespace-{unique}.jsonl"));
+
+        let log = AppendOnlyEventLog::open(&path);
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        log.append(&first).expect("append first");
+
+        let second = Event::state_write(
+            1,
+            0,
+            "tenant-b",
+            "tenant-b:key",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("second");
+
+        let err = log
+            .append(&second)
+            .expect_err("must fail with namespace breach");
+        let violation = err
+            .downcast_ref::<ProtocolViolationError>()
+            .expect("must be ProtocolViolationError");
+        assert_eq!(violation.code, "NAMESPACE_BREACH");
+        assert_eq!(violation.exit_code, 5);
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("lock"));
