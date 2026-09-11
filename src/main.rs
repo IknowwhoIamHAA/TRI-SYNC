@@ -256,12 +256,16 @@ fn run() -> ProtocolResult<()> {
             }
 
             let state = ReplayEngine::replay(&events).map_err(|err| {
-                err.with_namespace(
-                    events
-                        .first()
-                        .map(|event| event.namespace.clone())
-                        .unwrap_or_else(|| RESERVED_SYSTEM_NAMESPACE.to_string()),
-                )
+                if err.namespace.is_some() {
+                    err
+                } else {
+                    err.with_namespace(
+                        events
+                            .first()
+                            .map(|event| event.namespace.clone())
+                            .unwrap_or_else(|| RESERVED_SYSTEM_NAMESPACE.to_string()),
+                    )
+                }
             })?;
             let digest = state.root_digest_hex().map_err(|err| {
                 ProtocolError::from_message(ProtocolPhase::Verify, ProtocolAction::Halt, err)
