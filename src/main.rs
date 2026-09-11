@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use tri_sync::canonical_json::to_canonical_string;
@@ -107,6 +107,7 @@ fn main() {
     std::process::exit(exit_code);
 }
 
+#[allow(clippy::result_large_err)]
 fn run() -> ProtocolResult<()> {
     let cli = Cli::parse();
 
@@ -466,6 +467,7 @@ fn run() -> ProtocolResult<()> {
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn run_example(log_path: PathBuf) -> ProtocolResult<()> {
     cleanup_log_artifacts(&log_path).map_err(|err| io_error(ProtocolPhase::Append, err))?;
 
@@ -616,9 +618,9 @@ fn emit_protocol_error(
     }
 }
 
-fn cleanup_log_artifacts(log_path: &PathBuf) -> Result<(), std::io::Error> {
+fn cleanup_log_artifacts(log_path: &Path) -> Result<(), std::io::Error> {
     let artifacts = [
-        log_path.clone(),
+        log_path.to_path_buf(),
         PathBuf::from(format!("{}.catalog.json", log_path.display())),
         PathBuf::from(format!("{}.catalog.tmp", log_path.display())),
         PathBuf::from(format!("{}.lock", log_path.display())),
