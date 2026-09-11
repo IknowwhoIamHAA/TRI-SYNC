@@ -15,6 +15,7 @@ pub struct ReplayOutcome {
 
 pub struct ReplayEngine;
 
+#[allow(clippy::result_large_err)]
 impl ReplayEngine {
     pub fn replay(events: &[Event]) -> ProtocolResult<BinaryStateMap> {
         Ok(Self::replay_with_snapshot(events, None)?.state)
