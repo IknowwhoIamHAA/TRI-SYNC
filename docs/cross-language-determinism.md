@@ -9,6 +9,11 @@ byte-for-byte identical canonical JSON, binary state map encodings, and SHA-256
 digests. This document provides the precise rules and test vectors needed to verify
 cross-language conformance.
 
+This guide is the clearest expression of TRI-SYNC's open-core interoperability
+contract: implementations in different languages can independently prove they are
+speaking the same wire format, computing the same hashes, and reconstructing the
+same deterministic state.
+
 ---
 
 ## 1. Canonical JSON Encoding

@@ -1,6 +1,6 @@
 # TRI-SYNC Product Overview
 
-**TRI-SYNC** is a compliance-first deterministic, append-only runtime for reproducible AI workflows, unalterable provenance trails, and cryptographically auditable regulated-data pipelines. It gives finance, healthcare, insurance, government, and AI platform teams a portable foundation for provable state and tamper-evident SHA-256 computation history.
+**TRI-SYNC** is a compliance-first deterministic, append-only runtime for reproducible AI workflows, unalterable provenance trails, and cryptographically auditable regulated-data pipelines. It gives finance, healthcare, insurance, and AI platform teams a portable foundation for provable state and tamper-evident SHA-256 computation history.
 
 ---
 
@@ -13,7 +13,7 @@ Modern AI and automation systems suffer from a fundamental auditability gap:
 - **State drift** — distributed components diverge silently; debugging requires manual reconciliation.
 - **Vendor lock-in** — audit and state systems are tightly coupled to cloud-provider proprietary APIs.
 
-These gaps are existential risks for regulated industries and AI governance frameworks.
+These gaps create operational and assurance failures for teams that need processing integrity, model-risk controls, and defensible audit evidence.
 
 ---
 
@@ -24,7 +24,7 @@ TRI-SYNC is a **deterministic runtime engine** that guarantees:
 1. **Identical outputs for identical inputs** — regardless of machine, OS, clock, or execution order within a tick.
 2. **Cryptographic audit trail** — every state transition is SHA-256 hashed and chained, forming an immutable, replayable event log.
 3. **Protocol-frozen stability** — the v1.0.0 wire format is frozen; any two conforming implementations produce byte-for-byte identical state representations.
-4. **Cloud-neutral portability** — runs on laptop, server, container, or embedded device with no cloud dependency.
+4. **Cloud-neutral portability** — runs on laptop, server, container, bare metal, or across clouds with no single-vendor dependency.
 
 ---
 
@@ -57,12 +57,18 @@ All event payloads use RFC 8785 canonical JSON: sorted keys, no whitespace, lowe
 
 | Sector | Use Case |
 |---|---|
-| **Finance** | Auditable order books, settlement reconciliation, regulatory reporting with provable computation history |
-| **Healthcare** | HIPAA-compliant audit logs for clinical decision systems, AI diagnostic trail, patient state change tracking |
+| **Finance** | Agentic SOC 2 Type II Processing Integrity evidence, internal model risk management, and provable computation history |
+| **Healthcare** | Cryptographically verified clinical-decision trails, patient state change tracking, and controlled automation evidence |
 | **Insurance** | Deterministic claims processing, reproducible underwriting models, fraud detection audit chains |
-| **Government** | Tamper-proof record systems, verifiable ballot processing, regulatory compliance pipelines |
 | **AI Platforms** | Reproducible model inference logs, prompt-response audit trails, multi-agent coordination with deterministic state |
-| **Legal / Compliance** | Immutable evidence chains, e-discovery-ready audit logs, cross-border data provenance |
+| **Internal Audit / Risk** | Immutable evidence chains, reconciliations, and replayable control validation |
+
+### Frontier-Scale Governance Segment
+
+Frontier-scale risk tracking is a separate positioning track for elite labs and advanced
+AI developers operating under emerging governance frameworks such as SB 53. That
+segment is distinct from TRI-SYNC's core enterprise narrative, which is anchored on
+processing integrity, internal MRM, and cryptographically verified audit trails.
 
 ---
 
@@ -99,15 +105,28 @@ The following guarantees are normative and cannot be broken without a major vers
 - **Portability**: No platform-specific encoding ambiguity; any language can implement a conforming client.
 - **Replay Safety**: Any node can reconstruct current state from genesis without external coordination.
 
+## Open-Core Conformance Clarity
+
+TRI-SYNC's open core is intentionally transparent:
+
+- the wire format is frozen at protocol **v1.0.0**
+- conformance expectations are documented in [cross-language-determinism.md](cross-language-determinism.md)
+- independent implementations can validate identical bytes, identical replay behavior,
+  and identical root digests
+
+This makes TRI-SYNC a mathematically verifiable utility rather than a black-box hosted service.
+
 ## Access Model
 
-The public core is available without a key: foundational event logging, `tri-sync verify`, `tri-sync replay`, and local single-tenant execution. Enterprise authorization through `TRISYNC_LICENSE_KEY` is required for commercial production mode and automated regulatory reporting. These controls support California AI governance-oriented audit practices; they do not constitute legal advice or a certification of compliance.
+The public core is available without a key: foundational event logging, `tri-sync verify`, `tri-sync replay`, and local single-tenant execution. Enterprise authorization through `TRISYNC_LICENSE_KEY` is required for commercial production mode, automated compliance export reporting, and scaled multi-tenant enterprise deployment. For core enterprise positioning, TRI-SYNC is aligned to Agentic SOC 2 Type II Processing Integrity, internal Model Risk Management workflows, and cryptographically verified audit trails. It does not itself constitute legal advice or a certification.
 
 ---
 
 ## Getting Started
 
 See [README.md](../README.md) for quickstart instructions, CLI reference, and licensing.
+
+See [docs/differentiation.md](differentiation.md) for cloud-native logging differentiation.
 
 See [docs/licensing.md](licensing.md) for the commercial license flow.
 

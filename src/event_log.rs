@@ -164,6 +164,18 @@ impl AppendOnlyEventLog {
         result
     }
 
+    pub fn lock_for_write(&self) -> Result<(), Box<dyn Error>> {
+        let lock_path = self.lock_path();
+        let lock_file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)?;
+        lock_file.lock_exclusive()?;
+        drop(lock_file);
+        Ok(())
+    }
+
     pub fn load(&self) -> Result<Vec<Event>, Box<dyn Error>> {
         if self.catalog_path().exists() {
             let catalog = self.read_catalog()?;
@@ -248,9 +260,15 @@ impl AppendOnlyEventLog {
 
         let expected_seq = catalog.next_seq;
         if event.seq != expected_seq {
-            return Err(
-                format!("SEQ_GAP: expected seq {}, got {}", expected_seq, event.seq).into(),
-            );
+            return Err(if event.seq < expected_seq {
+                format!(
+                    "SEQUENCE_COLLISION: namespace {} already contains seq {}",
+                    event.namespace, event.seq
+                )
+                .into()
+            } else {
+                format!("SEQ_GAP: expected seq {}, got {}", expected_seq, event.seq).into()
+            });
         }
 
         event.validate_prev_digest(&catalog.head_digest)?;
