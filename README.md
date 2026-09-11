@@ -1,7 +1,7 @@
 # **TRI‑SYNC**
 ### *The compliance-first deterministic runtime for auditable AI and regulated workflows.*
 
-TRI‑SYNC is a compliance-first Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It supports teams aligning AI workflows with California AI governance expectations and regulated-data controls.
+TRI‑SYNC is a compliance-first Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It supports teams that need cryptographically verified audit trails, deterministic state tracking, and cloud-neutral deployment flexibility.
 
 > **v1.3.0 — Protocol frozen. Production-ready.**  
 > The wire format is stable. Any two conforming implementations produce byte-for-byte identical state.
@@ -244,11 +244,14 @@ Library use requires a commercial license. See [docs/licensing.md](docs/licensin
 
 TRI-SYNC is purpose-built for regulated and high-assurance environments:
 
-- **Finance** — auditable order books, settlement reconciliation, regulatory reporting
-- **Healthcare** — HIPAA-compliant AI audit logs, clinical decision trails
+- **Finance** — Agentic SOC 2 Type II Processing Integrity evidence, internal model risk management, auditable order books
+- **Healthcare** — cryptographically verified clinical decision trails and controlled automation audit logs
 - **Insurance** — deterministic claims processing, reproducible underwriting
-- **Government** — tamper-proof record systems, verifiable processing pipelines
 - **AI Platforms** — reproducible inference logs, multi-agent coordination
+
+Frontier-scale AI risk tracking is a separate segment for elite labs operating under
+specialized governance frameworks; general enterprise positioning remains centered on
+processing integrity, internal MRM, and portable auditability.
 
 **Learn more:** [docs/product.md](docs/product.md)
 
@@ -260,6 +263,7 @@ TRI-SYNC is purpose-built for regulated and high-assurance environments:
 |---|---|
 | [SPEC.md](SPEC.md) | Full normative protocol specification |
 | [docs/product.md](docs/product.md) | Product overview, use cases, guarantees |
+| [docs/differentiation.md](docs/differentiation.md) | TRI-SYNC vs CloudTrail, Object Lock, and vendor-native integrity features |
 | [docs/licensing.md](docs/licensing.md) | Licensing flow, tiers, FAQ |
 | [docs/cross-language-determinism.md](docs/cross-language-determinism.md) | Wire format, test vectors, conformance checklist |
 | [invariants.md](invariants.md) | All protocol invariants |
