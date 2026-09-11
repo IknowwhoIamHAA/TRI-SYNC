@@ -19,12 +19,18 @@
 //!
 //! # Error behavior
 //!
-//! If no valid license key is found the binary prints a clear, actionable error
-//! message to stderr and exits with code 1.  No protocol state is modified.
+//! If no valid license key is found the binary prints a clear, actionable,
+//! machine-parseable error to stderr and exits before modifying protocol state.
 
 use std::env;
+use std::fmt::{self, Display, Formatter};
 use std::fs;
 use std::path::PathBuf;
+
+use serde::Serialize;
+use serde_json::{Value, json};
+
+use crate::canonical_json::to_canonical_string;
 
 /// The environment variable that must contain the license key.
 pub const LICENSE_KEY_ENV: &str = "TRISYNC_LICENSE_KEY";
@@ -32,12 +38,98 @@ pub const LICENSE_KEY_ENV: &str = "TRISYNC_LICENSE_KEY";
 /// The environment variable that overrides the path to the valid-keys file.
 pub const LICENSE_KEYS_FILE_ENV: &str = "TRISYNC_LICENSE_KEYS_FILE";
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "error_type")]
+pub enum LicenseError {
+    LicenseRequired {
+        feature: String,
+        detail: String,
+    },
+    EmptyLicenseKey {
+        feature: Option<String>,
+        detail: String,
+    },
+    LicenseStoreMissing {
+        feature: Option<String>,
+        detail: String,
+    },
+    InvalidLicenseKey {
+        feature: Option<String>,
+        detail: String,
+    },
+}
+
+impl LicenseError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::LicenseRequired { .. } => "LICENSE_REQUIRED",
+            Self::EmptyLicenseKey { .. } => "LICENSE_KEY_EMPTY",
+            Self::LicenseStoreMissing { .. } => "LICENSE_STORE_MISSING",
+            Self::InvalidLicenseKey { .. } => "LICENSE_INVALID",
+        }
+    }
+
+    pub fn exit_code(&self) -> i32 {
+        3
+    }
+
+    pub fn to_json_value(&self) -> Value {
+        let mut value = serde_json::to_value(self).unwrap_or_else(|_| {
+            json!({
+                "error_type": "LicenseRequired",
+                "feature": "unknown",
+                "detail": "failed to serialize license error"
+            })
+        });
+        if let Some(object) = value.as_object_mut() {
+            object.insert("code".to_string(), Value::String(self.code().to_string()));
+            object.insert("exit_code".to_string(), Value::from(self.exit_code()));
+            object.insert("message".to_string(), Value::String(self.to_string()));
+        }
+        value
+    }
+
+    pub fn to_stderr_json(&self) -> String {
+        to_canonical_string(&self.to_json_value())
+            .unwrap_or_else(|_| format!(r#"{{"code":"{}","message":"{}"}}"#, self.code(), self))
+    }
+}
+
+impl Display for LicenseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LicenseRequired { detail, .. }
+            | Self::EmptyLicenseKey { detail, .. }
+            | Self::LicenseStoreMissing { detail, .. }
+            | Self::InvalidLicenseKey { detail, .. } => f.write_str(detail),
+        }
+    }
+}
+
 /// Require a valid commercial key for an enterprise feature.
 pub fn require_enterprise(feature: &str) -> Result<(), String> {
-    check().map_err(|err| {
-        format!(
-            "{feature} is an enterprise feature and requires a valid {LICENSE_KEY_ENV}.\n\n{err}"
-        )
+    require_enterprise_detailed(feature).map_err(|err| err.to_string())
+}
+
+/// Require a valid commercial key for an enterprise feature with a structured error.
+pub fn require_enterprise_detailed(feature: &str) -> Result<(), LicenseError> {
+    check_detailed(Some(feature.to_string())).map_err(|err| match err {
+        LicenseError::EmptyLicenseKey { detail, .. } => LicenseError::EmptyLicenseKey {
+            feature: Some(feature.to_string()),
+            detail,
+        },
+        LicenseError::LicenseStoreMissing { detail, .. } => LicenseError::LicenseStoreMissing {
+            feature: Some(feature.to_string()),
+            detail,
+        },
+        LicenseError::InvalidLicenseKey { detail, .. } => LicenseError::InvalidLicenseKey {
+            feature: Some(feature.to_string()),
+            detail,
+        },
+        LicenseError::LicenseRequired { detail, .. } => LicenseError::LicenseRequired {
+            feature: feature.to_string(),
+            detail,
+        },
     })
 }
 
@@ -48,17 +140,24 @@ pub fn require_enterprise(feature: &str) -> Result<(), String> {
 ///
 /// Call this once at binary startup before executing any command.
 pub fn check() -> Result<(), String> {
-    let key = read_key()?;
-    let valid_keys = load_valid_keys()?;
+    check_detailed(None).map_err(|err| err.to_string())
+}
+
+pub fn check_detailed(feature: Option<String>) -> Result<(), LicenseError> {
+    let key = read_key(feature.clone())?;
+    let valid_keys = load_valid_keys(feature.clone())?;
 
     if valid_keys.is_empty() {
-        return Err(format!(
-            "No license key store found.\n\
-             Please ensure a valid-keys file exists at one of the default paths\n\
-             or set {LICENSE_KEYS_FILE_ENV} to the correct path.\n\
-             \n\
-             To obtain a license key, visit: https://github.com/IknowwhoIamHAA/TRI-SYNC"
-        ));
+        return Err(LicenseError::LicenseStoreMissing {
+            feature,
+            detail: format!(
+                "No license key store found.\n\
+                 Please ensure a valid-keys file exists at one of the default paths\n\
+                 or set {LICENSE_KEYS_FILE_ENV} to the correct path.\n\
+                 \n\
+                 To obtain a license key, visit: https://github.com/IknowwhoIamHAA/TRI-SYNC"
+            ),
+        });
     }
 
     // Iterate all keys without short-circuiting to reduce timing variance.
@@ -66,39 +165,48 @@ pub fn check() -> Result<(), String> {
     if found {
         Ok(())
     } else {
-        Err(format!(
-            "Invalid or expired license key.\n\
-             \n\
-             The key set in ${LICENSE_KEY_ENV} was not found in the license key store.\n\
-             \n\
-             • To obtain or renew a license key, visit:\n  \
-             https://github.com/IknowwhoIamHAA/TRI-SYNC\n\
-             • Once you have a key, run:\n  \
-             export {LICENSE_KEY_ENV}=<your-key>\n  \
-             tri-sync <command>"
-        ))
+        Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!(
+                "Invalid or expired license key.\n\
+                 \n\
+                 The key set in ${LICENSE_KEY_ENV} was not found in the license key store.\n\
+                 \n\
+                 • To obtain or renew a license key, visit:\n  \
+                 https://github.com/IknowwhoIamHAA/TRI-SYNC\n\
+                 • Once you have a key, run:\n  \
+                 export {LICENSE_KEY_ENV}=<your-key>\n  \
+                 tri-sync <command>"
+            ),
+        })
     }
 }
 
 /// Read the license key from the environment.
-fn read_key() -> Result<String, String> {
+fn read_key(feature: Option<String>) -> Result<String, LicenseError> {
     match env::var(LICENSE_KEY_ENV) {
         Ok(key) if !key.trim().is_empty() => Ok(key.trim().to_string()),
-        Ok(_) => Err(format!(
-            "The ${LICENSE_KEY_ENV} environment variable is set but empty.\n\
-             Set it to your TRI-SYNC license key before running:\n  \
-             export {LICENSE_KEY_ENV}=<your-key>"
-        )),
-        Err(_) => Err(format!(
-            "TRI-SYNC requires a commercial license key.\n\
-             \n\
-             Set the ${LICENSE_KEY_ENV} environment variable to your license key:\n  \
-             export {LICENSE_KEY_ENV}=<your-key>\n  \
-             tri-sync <command>\n\
-             \n\
-             To obtain a license key, visit:\n  \
-             https://github.com/IknowwhoIamHAA/TRI-SYNC"
-        )),
+        Ok(_) => Err(LicenseError::EmptyLicenseKey {
+            feature,
+            detail: format!(
+                "The ${LICENSE_KEY_ENV} environment variable is set but empty.\n\
+                 Set it to your TRI-SYNC license key before running:\n  \
+                 export {LICENSE_KEY_ENV}=<your-key>"
+            ),
+        }),
+        Err(_) => Err(LicenseError::LicenseRequired {
+            feature: feature.unwrap_or_else(|| "commercial feature".to_string()),
+            detail: format!(
+                "TRI-SYNC requires a commercial license key.\n\
+                 \n\
+                 Set the ${LICENSE_KEY_ENV} environment variable to your license key:\n  \
+                 export {LICENSE_KEY_ENV}=<your-key>\n  \
+                 tri-sync <command>\n\
+                 \n\
+                 To obtain a license key, visit:\n  \
+                 https://github.com/IknowwhoIamHAA/TRI-SYNC"
+            ),
+        }),
     }
 }
 
@@ -106,19 +214,22 @@ fn read_key() -> Result<String, String> {
 ///
 /// Returns an empty set if no key-store file is found (the caller is
 /// responsible for treating an empty store as an error).
-fn load_valid_keys() -> Result<std::collections::HashSet<String>, String> {
+fn load_valid_keys(
+    feature: Option<String>,
+) -> Result<std::collections::HashSet<String>, LicenseError> {
     let path = resolve_keys_file_path();
 
     let Some(path) = path else {
         return Ok(std::collections::HashSet::new());
     };
 
-    let content = fs::read_to_string(&path).map_err(|err| {
-        format!(
+    let content = fs::read_to_string(&path).map_err(|err| LicenseError::LicenseStoreMissing {
+        feature,
+        detail: format!(
             "Failed to read license key store at {}: {err}\n\
-             Check file permissions or set {LICENSE_KEYS_FILE_ENV} to the correct path.",
+                 Check file permissions or set {LICENSE_KEYS_FILE_ENV} to the correct path.",
             path.display()
-        )
+        ),
     })?;
 
     Ok(parse_key_file_content(&content))
@@ -184,7 +295,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        LICENSE_KEY_ENV, LICENSE_KEYS_FILE_ENV, check, parse_key_file_content, require_enterprise,
+        LICENSE_KEY_ENV, LICENSE_KEYS_FILE_ENV, LicenseError, check, parse_key_file_content,
+        require_enterprise, require_enterprise_detailed,
     };
 
     // Serialize all env-mutating tests so they don't interfere with each other.
@@ -284,6 +396,20 @@ mod tests {
                     .expect_err("enterprise feature should require a key");
                 assert!(err.contains("Automated compliance reporting"), "got: {err}");
                 assert!(err.contains(LICENSE_KEY_ENV), "got: {err}");
+            },
+        );
+    }
+
+    #[test]
+    fn enterprise_feature_returns_structured_license_error() {
+        with_env_locked(
+            &[(LICENSE_KEY_ENV, None), (LICENSE_KEYS_FILE_ENV, None)],
+            || {
+                let err = require_enterprise_detailed("Automated compliance reporting")
+                    .expect_err("enterprise feature should require a key");
+                assert!(matches!(err, LicenseError::LicenseRequired { .. }));
+                assert_eq!(err.code(), "LICENSE_REQUIRED");
+                assert_eq!(err.exit_code(), 3);
             },
         );
     }

@@ -187,3 +187,23 @@ fn replay_mixed_namespace_emits_json_error() {
     assert_eq!(json["code"], "NAMESPACE_BREACH");
     assert_eq!(json["exit_code"], 5);
 }
+
+#[test]
+fn enterprise_gated_command_without_license_emits_json_error() {
+    let temp = tempdir().expect("tempdir");
+    let log_path = temp.path().join("events.jsonl");
+
+    let output = Command::new(tri_sync_bin())
+        .env_remove("TRISYNC_LICENSE_KEY")
+        .env_remove("TRISYNC_LICENSE_KEYS_FILE")
+        .args(["report", "--log", log_path.to_str().expect("log path")])
+        .output()
+        .expect("run report");
+
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    let json: serde_json::Value = serde_json::from_str(stderr.trim()).expect("json stderr");
+    assert_eq!(json["error_type"], "LicenseRequired");
+    assert_eq!(json["code"], "LICENSE_REQUIRED");
+    assert_eq!(json["exit_code"], 3);
+}

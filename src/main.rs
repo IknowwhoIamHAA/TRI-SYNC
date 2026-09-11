@@ -10,7 +10,7 @@ use tri_sync::digest::sha256_hex;
 use tri_sync::error::ProtocolViolationError;
 use tri_sync::event::{Event, EventType, ZERO_DIGEST_HEX};
 use tri_sync::hex::decode_hex;
-use tri_sync::license;
+use tri_sync::license::{self, LicenseError};
 use tri_sync::replay::{ReplayCheckpoint, ReplayEngine};
 use tri_sync::state_map::{BinaryStateMap, BsmValue, StateSnapshot};
 
@@ -117,6 +117,7 @@ enum Commands {
 #[derive(Debug)]
 enum CliError {
     Protocol(ProtocolViolationError),
+    License(LicenseError),
     Message(String),
 }
 
@@ -124,6 +125,7 @@ impl CliError {
     fn exit_code(&self) -> i32 {
         match self {
             Self::Protocol(error) => error.exit_code(),
+            Self::License(error) => error.exit_code(),
             Self::Message(_) => 1,
         }
     }
@@ -131,6 +133,7 @@ impl CliError {
     fn stderr_json(&self) -> String {
         match self {
             Self::Protocol(error) => error.to_stderr_json(),
+            Self::License(error) => error.to_stderr_json(),
             Self::Message(message) => to_canonical_string(&json!({
                 "code": "COMMAND_ERROR",
                 "error_type": "CommandError",
@@ -145,6 +148,12 @@ impl CliError {
 impl From<ProtocolViolationError> for CliError {
     fn from(value: ProtocolViolationError) -> Self {
         Self::Protocol(value)
+    }
+}
+
+impl From<LicenseError> for CliError {
+    fn from(value: LicenseError) -> Self {
+        Self::License(value)
     }
 }
 
@@ -176,8 +185,7 @@ fn run() -> Result<(), CliError> {
             production,
         } => {
             if production {
-                license::require_enterprise("Commercial production execution")
-                    .map_err(CliError::Message)?;
+                license::require_enterprise_detailed("Commercial production execution")?;
             }
             let log = FileSystemBackend::open(log);
             let key = namespaced_key(&namespace, &key);
@@ -208,8 +216,7 @@ fn run() -> Result<(), CliError> {
             production,
         } => {
             if production {
-                license::require_enterprise("Commercial production execution")
-                    .map_err(CliError::Message)?;
+                license::require_enterprise_detailed("Commercial production execution")?;
             }
             let log = FileSystemBackend::open(log);
             let events = log.load()?;
@@ -388,8 +395,7 @@ fn run() -> Result<(), CliError> {
             println!("replay_ok={replay_ok}");
         }
         Commands::Report { log } => {
-            license::require_enterprise("Automated compliance reporting")
-                .map_err(CliError::Message)?;
+            license::require_enterprise_detailed("Automated compliance reporting")?;
             let event_log = FileSystemBackend::open(log);
             let log_path = event_log.path().to_path_buf();
             let events = event_log.load()?;

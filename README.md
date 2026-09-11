@@ -3,7 +3,7 @@
 
 TRI‑SYNC is a compliance-first Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It supports teams aligning AI workflows with California AI governance expectations and regulated-data controls.
 
-> **v1.0.0 — Protocol frozen. Production-ready.**  
+> **v1.3.0 — Protocol frozen. Production-ready.**  
 > The wire format is stable. Any two conforming implementations produce byte-for-byte identical state.
 
 ---
@@ -171,7 +171,7 @@ TRI-SYNC is also usable as a Rust library for embedding deterministic state into
 ```toml
 # Cargo.toml
 [dependencies]
-tri-sync = { git = "https://github.com/IknowwhoIamHAA/TRI-SYNC", tag = "v1.0.0" }
+tri-sync = { git = "https://github.com/IknowwhoIamHAA/TRI-SYNC", tag = "v1.3.0" }
 ```
 
 ```rust
@@ -334,10 +334,10 @@ Customer activates:
 
 ## Project Status
 
-**v1.0.0 — Protocol frozen. Production-ready.**
+**v1.3.0 — Protocol frozen. Production-ready.**
 
 - ✅ Wire format frozen — no breaking changes after v1.0.0
-- ✅ 110 tests pass
+- ✅ Rust test suite expanded for checkpoint replay, backends, and CLI compliance errors
 - ✅ CodeQL: 0 security alerts
 - ✅ No TODOs or FIXMEs in protocol-critical code
 - ✅ Cross-language determinism test vector pinned: `768e154f…`

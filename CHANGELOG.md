@@ -2,12 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] — v1.1.0
+## [Unreleased] — v1.3.0
 
 > **Backward-compatible additions only.** The v1.0.0 wire protocol is unchanged.  
 > All new features are opt-in. No breaking changes.
 
 ### Added
+
+#### Architecture
+- `EventLogBackend` trait for pluggable storage, plus `FileSystemBackend` and
+  `InMemoryBackend` reference implementations.
+- Trusted-checkpoint verification with `tri-sync verify --checkpoint-root <digest>`,
+  allowing replay to resume from a verified `TICK_SEAL` snapshot cache instead of
+  always starting from genesis.
+- `ProtocolViolationError` structured JSON error taxonomy with compliance-oriented
+  exit codes for sequence/digest/format failures, namespace breaches, and
+  checkpoint/state mismatches.
+- Structured enterprise-license errors for gated commands, emitted as JSON to `stderr`
+  with a distinct exit code when a commercial feature is invoked without a valid key.
 
 #### License
 - Removed the `LICENSE` file (which had contained Apache 2.0 text) from the repository root.
@@ -49,8 +61,15 @@ All notable changes to this project will be documented in this file.
   raised the count from **74 → 100**.
 - 10 additional conformance tests for v1.1.0 features: 7 for `BinaryStateMap::diff` and 3 for
   the tick regression guard, raising the total to **110 tests**.
+- Additional replay and CLI integration tests cover trusted-checkpoint resume,
+  missing checkpoint roots, mixed-namespace JSON errors, and structured
+  enterprise-license failures.
 
 ### Changed
+- `Cargo.toml`: crate/package version bumped to **1.3.0** while preserving the frozen
+  **v1.0.0** wire protocol and segment `protocol_ver`.
+- `README.md` and `architecture.md`: documented pluggable storage, checkpoint-based
+  verification, structured protocol errors, and the open-core / enterprise split.
 - `Cargo.toml`: added `rust-version = "1.85"` (MSRV pin).
 - `src/hex.rs`: replaced `usize::is_multiple_of(2)` (stabilized Rust 1.87) with
   `% 2 != 0` (MSRV-safe).
