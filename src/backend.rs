@@ -117,9 +117,20 @@ impl EventLogBackend for InMemoryBackend {
 
         let expected_seq = events.last().map_or(0, |last| last.seq + 1);
         if event.seq != expected_seq {
-            return Err(ProtocolViolationError::SequenceGap {
-                expected_seq,
-                actual_seq: event.seq,
+            return Err(if event.seq < expected_seq {
+                ProtocolViolationError::sequence_collision(
+                    Some(event.namespace.clone()),
+                    event.seq,
+                    format!(
+                        "SEQUENCE_COLLISION: namespace {} already contains seq {}",
+                        event.namespace, event.seq
+                    ),
+                )
+            } else {
+                ProtocolViolationError::SequenceGap {
+                    expected_seq,
+                    actual_seq: event.seq,
+                }
             });
         }
 

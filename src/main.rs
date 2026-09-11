@@ -502,24 +502,80 @@ fn load_replay_checkpoint(
     events: &[Event],
     checkpoint_root: &str,
 ) -> Result<(usize, ReplayCheckpoint), CliError> {
-    let (index, seal_event) = events
+    let matching_seals = events
         .iter()
         .enumerate()
-        .rev()
-        .find(|(_, event)| {
+        .filter(|(_, event)| {
             event.event_type == EventType::TickSeal
                 && event.root_digest.as_deref() == Some(checkpoint_root)
         })
-        .ok_or_else(|| {
-            ProtocolViolationError::missing_tick_seal(
-                Some(checkpoint_root.to_string()),
-                format!(
-                    "MISSING_TICK_SEAL: no TICK_SEAL with root_digest {} was found in {}",
-                    checkpoint_root,
-                    log_path.display()
-                ),
-            )
-        })?;
+        .collect::<Vec<_>>();
+
+    if matching_seals.is_empty() {
+        return Err(ProtocolViolationError::missing_tick_seal(
+            Some(checkpoint_root.to_string()),
+            format!(
+                "MISSING_TICK_SEAL: no TICK_SEAL with root_digest {} was found in {}",
+                checkpoint_root,
+                log_path.display()
+            ),
+        )
+        .into());
+    }
+
+    if matching_seals.len() > 1 {
+        return Err(ProtocolViolationError::state_mismatch(
+            None,
+            Some(checkpoint_root.to_string()),
+            None,
+            Some(checkpoint_root.to_string()),
+            format!(
+                "STATE_MISMATCH: checkpoint root {} is ambiguous; found {} matching TICK_SEAL events in {}",
+                checkpoint_root,
+                matching_seals.len(),
+                log_path.display()
+            ),
+        )
+        .into());
+    }
+
+    let (index, seal_event) = matching_seals.into_iter().next().ok_or_else(|| {
+        ProtocolViolationError::missing_tick_seal(
+            Some(checkpoint_root.to_string()),
+            format!(
+                "MISSING_TICK_SEAL: no TICK_SEAL with root_digest {} was found in {}",
+                checkpoint_root,
+                log_path.display()
+            ),
+        )
+    })?;
+
+    seal_event
+        .validate_digest()
+        .map_err(ProtocolViolationError::from_message)?;
+
+    let expected_prev_digest = if index == 0 {
+        ZERO_DIGEST_HEX.to_string()
+    } else {
+        events[index - 1].digest.clone()
+    };
+    seal_event
+        .validate_prev_digest(&expected_prev_digest)
+        .map_err(ProtocolViolationError::from_message)?;
+
+    if seal_event.seq != index as u64 {
+        return Err(ProtocolViolationError::state_mismatch(
+            Some(seal_event.seq),
+            Some(checkpoint_root.to_string()),
+            None,
+            Some(checkpoint_root.to_string()),
+            format!(
+                "STATE_MISMATCH: checkpoint seal seq {} does not match its log position {}",
+                seal_event.seq, index
+            ),
+        )
+        .into());
+    }
 
     if seal_event.event_count != Some(index as u32) {
         return Err(ProtocolViolationError::invalid_event_format(

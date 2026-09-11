@@ -189,6 +189,161 @@ fn replay_mixed_namespace_emits_json_error() {
 }
 
 #[test]
+fn replay_sequence_collision_emits_json_error() {
+    let temp = tempdir().expect("tempdir");
+    let log_path = temp.path().join("collision.jsonl");
+
+    let first = Event::state_write(
+        0,
+        0,
+        "tenant-a",
+        "tenant-a:key-a",
+        BsmValue::Integer(1),
+        false,
+        tri_sync::event::ZERO_DIGEST_HEX,
+        None,
+    )
+    .expect("first");
+    let second = Event::state_write(
+        0,
+        0,
+        "tenant-a",
+        "tenant-a:key-b",
+        BsmValue::Integer(2),
+        false,
+        first.digest.clone(),
+        None,
+    )
+    .expect("second");
+
+    let payload = [first, second]
+        .into_iter()
+        .map(|event| {
+            let value = serde_json::to_value(event).expect("event json");
+            to_canonical_string(&value).expect("canonical event")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&log_path, format!("{payload}\n")).expect("write log");
+
+    let output = Command::new(tri_sync_bin())
+        .args(["replay", "--log"])
+        .arg(&log_path)
+        .output()
+        .expect("run replay");
+
+    assert_eq!(output.status.code(), Some(5));
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    let json: serde_json::Value = serde_json::from_str(stderr.trim()).expect("json stderr");
+    assert_eq!(json["error_type"], "SequenceCollision");
+    assert_eq!(json["code"], "SEQUENCE_COLLISION");
+    assert_eq!(json["exit_code"], 5);
+    assert_eq!(json["seq"], 0);
+}
+
+#[test]
+fn verify_checkpoint_root_rejects_ambiguous_lineage() {
+    let temp = tempdir().expect("tempdir");
+    let log_path = temp.path().join("events.jsonl");
+    let backend = FileSystemBackend::open(&log_path);
+
+    let first = Event::state_write(
+        0,
+        1,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(1),
+        false,
+        tri_sync::event::ZERO_DIGEST_HEX,
+        None,
+    )
+    .expect("first");
+    backend.append(&first).expect("append first");
+
+    let mut state_one = tri_sync::state_map::BinaryStateMap::new();
+    state_one
+        .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+        .expect("set");
+    let repeated_root = state_one.root_digest_hex().expect("root one");
+    let first_seal = Event::tick_seal(
+        1,
+        1,
+        "tenant-a",
+        1,
+        repeated_root.clone(),
+        first.digest.clone(),
+        10,
+    )
+    .expect("first seal");
+    backend.append(&first_seal).expect("append first seal");
+
+    let second = Event::state_write(
+        2,
+        2,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(2),
+        false,
+        first_seal.digest.clone(),
+        None,
+    )
+    .expect("second");
+    backend.append(&second).expect("append second");
+
+    let third = Event::state_write(
+        3,
+        3,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(1),
+        false,
+        second.digest.clone(),
+        None,
+    )
+    .expect("third");
+    backend.append(&third).expect("append third");
+
+    let repeated_seal = Event::tick_seal(
+        4,
+        3,
+        "tenant-a",
+        4,
+        repeated_root.clone(),
+        third.digest.clone(),
+        20,
+    )
+    .expect("repeated seal");
+    backend
+        .append(&repeated_seal)
+        .expect("append repeated seal");
+
+    let initial_verify = Command::new(tri_sync_bin())
+        .args(["verify", "--log"])
+        .arg(&log_path)
+        .output()
+        .expect("run verify");
+    assert!(
+        initial_verify.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&initial_verify.stderr)
+    );
+
+    let output = Command::new(tri_sync_bin())
+        .args(["verify", "--log"])
+        .arg(&log_path)
+        .args(["--checkpoint-root", &repeated_root])
+        .output()
+        .expect("run checkpoint verify");
+
+    assert_eq!(output.status.code(), Some(6));
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    let json: serde_json::Value = serde_json::from_str(stderr.trim()).expect("json stderr");
+    assert_eq!(json["error_type"], "StateMismatch");
+    assert_eq!(json["code"], "STATE_MISMATCH");
+    assert_eq!(json["exit_code"], 6);
+}
+
+#[test]
 fn enterprise_gated_command_without_license_emits_json_error() {
     let temp = tempdir().expect("tempdir");
     let log_path = temp.path().join("events.jsonl");

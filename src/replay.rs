@@ -179,9 +179,23 @@ impl ReplayEngine {
             }
 
             if event.seq != expected_seq {
-                return Err(ProtocolViolationError::SequenceGap {
-                    expected_seq,
-                    actual_seq: event.seq,
+                return Err(if event.seq < expected_seq {
+                    ProtocolViolationError::sequence_collision(
+                        expected_namespace.clone(),
+                        event.seq,
+                        format!(
+                            "SEQUENCE_COLLISION: namespace {} has competing events at seq {}",
+                            expected_namespace
+                                .as_deref()
+                                .unwrap_or(event.namespace.as_str()),
+                            event.seq
+                        ),
+                    )
+                } else {
+                    ProtocolViolationError::SequenceGap {
+                        expected_seq,
+                        actual_seq: event.seq,
+                    }
                 });
             }
 
@@ -461,6 +475,7 @@ impl ReplayEngine {
 
 #[cfg(test)]
 mod tests {
+    use crate::error::ProtocolViolationError;
     use crate::event::{Event, ZERO_DIGEST_HEX};
     use crate::hex::decode_hex;
     use crate::state_map::BsmValue;
@@ -1125,5 +1140,39 @@ mod tests {
         let err = ReplayEngine::replay_with_checkpoint(&[broken], Some(checkpoint))
             .expect_err("broken prev digest should fail");
         assert!(err.to_string().contains("DIGEST_MISMATCH"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_duplicate_sequence_as_sequence_collision() {
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key-a",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        let second = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key-b",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("second");
+
+        let err = ReplayEngine::replay(&[first, second]).expect_err("duplicate seq should fail");
+        assert!(matches!(
+            err,
+            ProtocolViolationError::SequenceCollision { seq: 0, .. }
+        ));
+        assert_eq!(err.code(), "SEQUENCE_COLLISION");
+        assert_eq!(err.exit_code(), 5);
     }
 }

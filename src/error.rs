@@ -13,6 +13,11 @@ pub enum ProtocolViolationError {
         expected_seq: u64,
         actual_seq: u64,
     },
+    SequenceCollision {
+        namespace: Option<String>,
+        seq: u64,
+        detail: String,
+    },
     DigestMismatch {
         seq: Option<u64>,
         expected: Option<String>,
@@ -46,6 +51,7 @@ impl ProtocolViolationError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::SequenceGap { .. } => "SEQ_GAP",
+            Self::SequenceCollision { .. } => "SEQUENCE_COLLISION",
             Self::DigestMismatch { .. } => "DIGEST_MISMATCH",
             Self::NamespaceBreach { .. } => "NAMESPACE_BREACH",
             Self::StateMismatch { .. } => "STATE_MISMATCH",
@@ -59,7 +65,7 @@ impl ProtocolViolationError {
             Self::SequenceGap { .. }
             | Self::DigestMismatch { .. }
             | Self::InvalidEventFormat { .. } => 4,
-            Self::NamespaceBreach { .. } => 5,
+            Self::SequenceCollision { .. } | Self::NamespaceBreach { .. } => 5,
             Self::StateMismatch { .. } | Self::MissingTickSeal { .. } => 6,
         }
     }
@@ -108,6 +114,18 @@ impl ProtocolViolationError {
         }
     }
 
+    pub fn sequence_collision(
+        namespace: Option<String>,
+        seq: u64,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::SequenceCollision {
+            namespace,
+            seq,
+            detail: detail.into(),
+        }
+    }
+
     pub fn to_json_value(&self) -> Value {
         let mut value = serde_json::to_value(self).unwrap_or_else(|_| {
             json!({
@@ -138,6 +156,14 @@ impl ProtocolViolationError {
             return Self::SequenceGap {
                 expected_seq,
                 actual_seq,
+            };
+        }
+
+        if message.contains("SEQUENCE_COLLISION") {
+            return Self::SequenceCollision {
+                namespace: None,
+                seq: parse_seq(&message).unwrap_or(0),
+                detail: message,
             };
         }
 
@@ -179,6 +205,7 @@ impl Display for ProtocolViolationError {
                 expected_seq,
                 actual_seq,
             } => write!(f, "SEQ_GAP: expected seq {expected_seq}, got {actual_seq}"),
+            Self::SequenceCollision { detail, .. } => f.write_str(detail),
             Self::DigestMismatch { detail, .. } => f.write_str(detail),
             Self::NamespaceBreach { detail, .. } => f.write_str(detail),
             Self::StateMismatch { detail, .. } => f.write_str(detail),
