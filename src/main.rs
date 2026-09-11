@@ -628,13 +628,21 @@ fn cleanup_log_artifacts(log_path: &Path) -> Result<(), std::io::Error> {
 
     for artifact in artifacts {
         if artifact.exists() {
-            let _ = std::fs::remove_file(artifact);
+            if let Err(err) = std::fs::remove_file(artifact) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    return Err(err);
+                }
+            }
         }
     }
 
     let segments_dir = PathBuf::from(format!("{}.segments", log_path.display()));
     if segments_dir.exists() {
-        let _ = std::fs::remove_dir_all(segments_dir);
+        if let Err(err) = std::fs::remove_dir_all(segments_dir) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                return Err(err);
+            }
+        }
     }
 
     Ok(())
