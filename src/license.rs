@@ -116,19 +116,19 @@ pub fn require_enterprise_detailed(feature: &str) -> Result<(), LicenseError> {
     check_detailed(Some(feature.to_string())).map_err(|err| match err {
         LicenseError::EmptyLicenseKey { detail, .. } => LicenseError::EmptyLicenseKey {
             feature: Some(feature.to_string()),
-            detail,
+            detail: enterprise_feature_detail(feature, &detail),
         },
         LicenseError::LicenseStoreMissing { detail, .. } => LicenseError::LicenseStoreMissing {
             feature: Some(feature.to_string()),
-            detail,
+            detail: enterprise_feature_detail(feature, &detail),
         },
         LicenseError::InvalidLicenseKey { detail, .. } => LicenseError::InvalidLicenseKey {
             feature: Some(feature.to_string()),
-            detail,
+            detail: enterprise_feature_detail(feature, &detail),
         },
         LicenseError::LicenseRequired { detail, .. } => LicenseError::LicenseRequired {
             feature: feature.to_string(),
-            detail,
+            detail: enterprise_feature_detail(feature, &detail),
         },
     })
 }
@@ -233,6 +233,12 @@ fn load_valid_keys(
     })?;
 
     Ok(parse_key_file_content(&content))
+}
+
+fn enterprise_feature_detail(feature: &str, detail: &str) -> String {
+    format!(
+        "{feature} is an enterprise feature and requires a valid {LICENSE_KEY_ENV}.\n\n{detail}"
+    )
 }
 
 /// Parse a key-file content string and return the set of valid keys.
