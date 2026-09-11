@@ -67,25 +67,35 @@ impl FileSystemBackend {
     }
 
     pub fn load_header(&self) -> Result<Option<SegmentHeader>, ProtocolViolationError> {
-        self.inner.load_header()
+        self.inner
+            .load_header()
+            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
     }
 }
 
 impl EventLogBackend for FileSystemBackend {
     fn append(&self, event: &Event) -> Result<(), ProtocolViolationError> {
-        self.inner.append(event)
+        self.inner
+            .append(event)
+            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
     }
 
     fn load(&self) -> Result<Vec<Event>, ProtocolViolationError> {
-        self.inner.load()
+        self.inner
+            .load()
+            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
     }
 
     fn next_sequence(&self) -> Result<u64, ProtocolViolationError> {
-        self.inner.next_sequence()
+        self.inner
+            .next_sequence()
+            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
     }
 
     fn lock_for_write(&self) -> Result<(), ProtocolViolationError> {
-        self.inner.lock_for_write()
+        self.inner
+            .lock_for_write()
+            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
     }
 }
 

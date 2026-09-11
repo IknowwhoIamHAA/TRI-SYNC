@@ -1,8 +1,5 @@
-<<<<<<< HEAD
-=======
 use std::error::Error;
 use std::ffi::OsString;
->>>>>>> origin/main
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -13,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::canonical_json::to_canonical_string;
 use crate::digest::sha256_hex;
-use crate::error::ProtocolViolationError;
 use crate::event::{Event, ZERO_DIGEST_HEX};
 
 const SEGMENT_PREFIX: &str = "#SEGMENT ";
@@ -155,168 +151,31 @@ impl AppendOnlyEventLog {
         &self.path
     }
 
-<<<<<<< HEAD
-    /// Append an event to the log.
-    ///
-    /// An exclusive OS-level file lock is held for the entire duration of the
-    /// operation, preventing concurrent writers from interleaving events or
-    /// corrupting the chain.  The `SegmentHeader`'s `seq_end` field is updated
-    /// to reflect the new last sequence number after every successful append.
-    pub fn append(&self, event: &Event) -> Result<(), ProtocolViolationError> {
-        self.with_write_lock(|log| log.append_under_lock(event))
-    }
-
-    pub fn lock_for_write(&self) -> Result<(), ProtocolViolationError> {
-        self.with_write_lock(|_| Ok(()))
-    }
-
-    fn with_write_lock<T>(
-        &self,
-        operation: impl FnOnce(&Self) -> Result<T, ProtocolViolationError>,
-    ) -> Result<T, ProtocolViolationError> {
-        let lock_path = self.path.with_extension("lock");
-=======
     pub fn append(&self, event: &Event) -> Result<(), Box<dyn Error>> {
         let lock_path = self.lock_path();
->>>>>>> origin/main
         let lock_file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-<<<<<<< HEAD
-            .open(&lock_path)
-            .map_err(|err| {
-                ProtocolViolationError::invalid_event_format(
-                    None,
-                    format!("failed to open lock file {}: {err}", lock_path.display()),
-                )
-            })?;
-        lock_file.lock_exclusive().map_err(|err| {
-            ProtocolViolationError::invalid_event_format(
-                None,
-                format!("failed to acquire lock for {}: {err}", self.path.display()),
-            )
-        })?;
-
-        let result = operation(self);
-=======
             .open(&lock_path)?;
         lock_file.lock_exclusive()?;
         let result = self.append_under_lock(event);
->>>>>>> origin/main
         drop(lock_file);
         result
     }
 
-<<<<<<< HEAD
-    fn append_under_lock(&self, event: &Event) -> Result<(), ProtocolViolationError> {
-        let last_event = self.load_last_event()?;
-
-        let expected_seq = last_event.as_ref().map_or(0, |last| last.seq + 1);
-        if event.seq != expected_seq {
-            return Err(if event.seq < expected_seq {
-                ProtocolViolationError::sequence_collision(
-                    Some(event.namespace.clone()),
-                    event.seq,
-                    format!(
-                        "SEQUENCE_COLLISION: namespace {} already contains seq {}",
-                        event.namespace, event.seq
-                    ),
-                )
-            } else {
-                ProtocolViolationError::SequenceGap {
-                    expected_seq,
-                    actual_seq: event.seq,
-                }
-            });
-        }
-
-        let expected_prev = last_event
-            .as_ref()
-            .map_or(ZERO_DIGEST_HEX.to_string(), |last| last.digest.clone());
-        event
-            .validate_prev_digest(&expected_prev)
-            .map_err(ProtocolViolationError::from_message)?;
-        event
-            .validate_digest()
-            .map_err(ProtocolViolationError::from_message)?;
-
-        if let Some(last) = &last_event {
-            if last.namespace != event.namespace {
-                return Err(ProtocolViolationError::namespace_breach(
-                    Some(last.namespace.clone()),
-                    Some(event.namespace.clone()),
-                    event.key.clone(),
-                    format!(
-                        "NAMESPACE_LEAK: mixed namespaces in one log file (expected {}, got {})",
-                        last.namespace, event.namespace
-                    ),
-                ));
-            }
-        }
-
-        if last_event.is_none() {
-            self.write_header(event)?;
-        }
-
-        let value = serde_json::to_value(event).map_err(|err| {
-            ProtocolViolationError::invalid_event_format(
-                Some(event.seq),
-                format!("failed to serialize event at seq {}: {err}", event.seq),
-            )
-        })?;
-        let canonical = to_canonical_string(&value)
-            .map_err(|err| ProtocolViolationError::invalid_event_format(Some(event.seq), err))?;
-
-        let mut file = OpenOptions::new()
+    pub fn lock_for_write(&self) -> Result<(), Box<dyn Error>> {
+        let lock_path = self.lock_path();
+        let lock_file = OpenOptions::new()
             .create(true)
-            .append(true)
-            .open(&self.path)?;
-        writeln!(file, "{canonical}")?;
-        drop(file);
-
-        // Fix 8: update seq_end in the segment header after every successful append.
-        self.update_header_seq_end(event.seq)?;
-
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)?;
+        lock_file.lock_exclusive()?;
+        drop(lock_file);
         Ok(())
     }
 
-    pub fn load(&self) -> Result<Vec<Event>, ProtocolViolationError> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let file = File::open(&self.path).map_err(|err| {
-            ProtocolViolationError::invalid_event_format(
-                None,
-                format!("failed to open log {}: {err}", self.path.display()),
-            )
-        })?;
-        let mut events = Vec::new();
-        for line in BufReader::new(file).lines() {
-            let line = line.map_err(|err| {
-                ProtocolViolationError::invalid_event_format(
-                    None,
-                    format!("failed to read log {}: {err}", self.path.display()),
-                )
-            })?;
-            let line = line.trim();
-            if line.is_empty() || line.starts_with(SEGMENT_PREFIX) {
-                continue;
-            }
-            let event = serde_json::from_str::<Event>(line).map_err(|err| {
-                ProtocolViolationError::invalid_event_format(
-                    None,
-                    format!("failed to parse event log line as JSON event: {err}"),
-                )
-            })?;
-            events.push(event);
-        }
-        Ok(events)
-    }
-
-    pub fn load_header(&self) -> Result<Option<SegmentHeader>, ProtocolViolationError> {
-=======
     pub fn load(&self) -> Result<Vec<Event>, Box<dyn Error>> {
         if self.catalog_path().exists() {
             let catalog = self.read_catalog()?;
@@ -336,32 +195,15 @@ impl AppendOnlyEventLog {
             return Ok(catalog.active_segment().map(|segment| segment.header()));
         }
 
->>>>>>> origin/main
         if !self.path.exists() {
             return Ok(None);
         }
 
-        let file = File::open(&self.path).map_err(|err| {
-            ProtocolViolationError::invalid_event_format(
-                None,
-                format!("failed to open log header {}: {err}", self.path.display()),
-            )
-        })?;
+        let file = File::open(&self.path)?;
         for line in BufReader::new(file).lines() {
-            let line = line.map_err(|err| {
-                ProtocolViolationError::invalid_event_format(
-                    None,
-                    format!("failed to read log header {}: {err}", self.path.display()),
-                )
-            })?;
+            let line = line?;
             if let Some(payload) = line.strip_prefix(SEGMENT_PREFIX) {
-                let header = serde_json::from_str(payload).map_err(|err| {
-                    ProtocolViolationError::invalid_event_format(
-                        None,
-                        format!("failed to parse segment header: {err}"),
-                    )
-                })?;
-                return Ok(Some(header));
+                return Ok(Some(serde_json::from_str(payload)?));
             }
             if !line.trim().is_empty() {
                 break;
@@ -370,13 +212,6 @@ impl AppendOnlyEventLog {
         Ok(None)
     }
 
-<<<<<<< HEAD
-    pub fn next_sequence(&self) -> Result<u64, ProtocolViolationError> {
-        Ok(self.load_last_event()?.map_or(0, |event| event.seq + 1))
-    }
-
-    fn load_last_event(&self) -> Result<Option<Event>, ProtocolViolationError> {
-=======
     pub fn next_sequence(&self) -> Result<u64, Box<dyn Error>> {
         Ok(self.tail_metadata()?.next_seq)
     }
@@ -425,9 +260,15 @@ impl AppendOnlyEventLog {
 
         let expected_seq = catalog.next_seq;
         if event.seq != expected_seq {
-            return Err(
-                format!("SEQ_GAP: expected seq {}, got {}", expected_seq, event.seq).into(),
-            );
+            return Err(if event.seq < expected_seq {
+                format!(
+                    "SEQUENCE_COLLISION: namespace {} already contains seq {}",
+                    event.namespace, event.seq
+                )
+                .into()
+            } else {
+                format!("SEQ_GAP: expected seq {}, got {}", expected_seq, event.seq).into()
+            });
         }
 
         event.validate_prev_digest(&catalog.head_digest)?;
@@ -559,70 +400,23 @@ impl AppendOnlyEventLog {
     }
 
     fn load_last_legacy_event(&self) -> Result<Option<Event>, Box<dyn Error>> {
->>>>>>> origin/main
         if !self.path.exists() {
             return Ok(None);
         }
 
-        let file = File::open(&self.path).map_err(|err| {
-            ProtocolViolationError::invalid_event_format(
-                None,
-                format!("failed to open log {}: {err}", self.path.display()),
-            )
-        })?;
+        let file = File::open(&self.path)?;
         let mut last_event = None;
         for line in BufReader::new(file).lines() {
-            let line = line.map_err(|err| {
-                ProtocolViolationError::invalid_event_format(
-                    None,
-                    format!("failed to read log {}: {err}", self.path.display()),
-                )
-            })?;
+            let line = line?;
             let line = line.trim();
             if line.is_empty() || line.starts_with(SEGMENT_PREFIX) {
                 continue;
             }
-            last_event = Some(serde_json::from_str::<Event>(line).map_err(|err| {
-                ProtocolViolationError::invalid_event_format(
-                    None,
-                    format!("failed to parse event log line as JSON event: {err}"),
-                )
-            })?);
+            last_event = Some(serde_json::from_str::<Event>(line)?);
         }
         Ok(last_event)
     }
 
-<<<<<<< HEAD
-    fn write_header(&self, first_event: &Event) -> Result<(), ProtocolViolationError> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|err| {
-                ProtocolViolationError::invalid_event_format(
-                    Some(first_event.seq),
-                    format!("system clock error while writing header: {err}"),
-                )
-            })?;
-        let header = SegmentHeader {
-            segment_id: format!("seg-{}-{}", first_event.seq, now.as_nanos()),
-            namespace: first_event.namespace.clone(),
-            seq_start: first_event.seq,
-            seq_end: first_event.seq,
-            first_digest: first_event.digest.clone(),
-            prev_segment: None,
-            created_at: now.as_millis() as u64,
-            protocol_ver: PROTOCOL_VERSION.to_string(),
-        };
-
-        let header_value = serde_json::to_value(&header).map_err(|err| {
-            ProtocolViolationError::invalid_event_format(
-                Some(first_event.seq),
-                format!("failed to serialize segment header: {err}"),
-            )
-        })?;
-        let header_canonical = to_canonical_string(&header_value).map_err(|err| {
-            ProtocolViolationError::invalid_event_format(Some(first_event.seq), err)
-        })?;
-=======
     fn migrate_legacy_log_under_lock(&self) -> Result<(), Box<dyn Error>> {
         if self.catalog_path().exists() {
             return Ok(());
@@ -633,7 +427,6 @@ impl AppendOnlyEventLog {
             SegmentCatalog::new(self.max_events_per_segment, self.max_bytes_per_segment);
         let tmp_segments_dir = self.derived_path(".segments.migrating");
         let tmp_catalog_path = self.derived_path(".catalog.migrating.json");
->>>>>>> origin/main
 
         if tmp_segments_dir.exists() {
             let _ = std::fs::remove_dir_all(&tmp_segments_dir);
@@ -699,22 +492,6 @@ impl AppendOnlyEventLog {
         Ok(())
     }
 
-<<<<<<< HEAD
-    /// Fix 8: rewrite the `#SEGMENT` header line with the updated `seq_end`.
-    ///
-    /// Reads the entire file, replaces the first `#SEGMENT` line with a new
-    /// header containing the updated `seq_end`, then atomically rewrites the
-    /// file via a temporary sibling.
-    fn update_header_seq_end(&self, new_seq_end: u64) -> Result<(), ProtocolViolationError> {
-        if !self.path.exists() {
-            return Err(ProtocolViolationError::invalid_event_format(
-                Some(new_seq_end),
-                format!(
-                    "log file {} disappeared after append; seq_end not updated",
-                    self.path.display()
-                ),
-            ));
-=======
     fn write_segment_header_to_dir(
         &self,
         segment_dir: &Path,
@@ -740,51 +517,10 @@ impl AppendOnlyEventLog {
     fn read_catalog_optional(&self) -> Result<Option<SegmentCatalog>, Box<dyn Error>> {
         if !self.catalog_path().exists() {
             return Ok(None);
->>>>>>> origin/main
         }
         Ok(Some(self.read_catalog()?))
     }
 
-<<<<<<< HEAD
-        let content = std::fs::read_to_string(&self.path).map_err(|err| {
-            ProtocolViolationError::invalid_event_format(
-                Some(new_seq_end),
-                format!(
-                    "failed to read segment header file {}: {err}",
-                    self.path.display()
-                ),
-            )
-        })?;
-        let mut new_content = String::with_capacity(content.len());
-        let mut updated = false;
-
-        for line in content.lines() {
-            if !updated {
-                if let Some(payload) = line.strip_prefix(SEGMENT_PREFIX) {
-                    let mut header: SegmentHeader =
-                        serde_json::from_str(payload).map_err(|err| {
-                            ProtocolViolationError::invalid_event_format(
-                                Some(new_seq_end),
-                                format!("failed to parse segment header: {err}"),
-                            )
-                        })?;
-                    header.seq_end = new_seq_end;
-                    let header_value = serde_json::to_value(&header).map_err(|err| {
-                        ProtocolViolationError::invalid_event_format(
-                            Some(new_seq_end),
-                            format!("failed to serialize segment header: {err}"),
-                        )
-                    })?;
-                    let header_canonical = to_canonical_string(&header_value).map_err(|err| {
-                        ProtocolViolationError::invalid_event_format(Some(new_seq_end), err)
-                    })?;
-                    new_content.push_str(SEGMENT_PREFIX);
-                    new_content.push_str(&header_canonical);
-                    new_content.push('\n');
-                    updated = true;
-                    continue;
-                }
-=======
     fn read_catalog(&self) -> Result<SegmentCatalog, Box<dyn Error>> {
         let content = std::fs::read_to_string(self.catalog_path())?;
         Ok(serde_json::from_str(&content)?)
@@ -831,33 +567,9 @@ impl AppendOnlyEventLog {
                     first.seq_start, first.seq_end, second.seq_start, second.seq_end
                 )
                 .into());
->>>>>>> origin/main
             }
         }
 
-<<<<<<< HEAD
-        if updated {
-            // Write to a temp file then rename for atomic replacement.
-            let tmp_path = self.path.with_extension("tmp");
-            std::fs::write(&tmp_path, &new_content).map_err(|err| {
-                ProtocolViolationError::invalid_event_format(
-                    Some(new_seq_end),
-                    format!(
-                        "failed to write temp segment header {}: {err}",
-                        tmp_path.display()
-                    ),
-                )
-            })?;
-            std::fs::rename(&tmp_path, &self.path).map_err(|err| {
-                ProtocolViolationError::invalid_event_format(
-                    Some(new_seq_end),
-                    format!(
-                        "failed to atomically replace segment header {}: {err}",
-                        self.path.display()
-                    ),
-                )
-            })?;
-=======
         Ok(segments)
     }
 
@@ -882,7 +594,6 @@ impl AppendOnlyEventLog {
 
         if !needs_new_segment {
             return Ok(());
->>>>>>> origin/main
         }
 
         if let Some(active) = catalog.active_segment_mut() {
