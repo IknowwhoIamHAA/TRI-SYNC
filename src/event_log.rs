@@ -407,16 +407,25 @@ impl AppendOnlyEventLog {
         let legacy_events = self.load_legacy_events()?;
         let mut catalog =
             SegmentCatalog::new(self.max_events_per_segment, self.max_bytes_per_segment);
+        let tmp_segments_dir = self.derived_path(".segments.migrating");
+        let tmp_catalog_path = self.derived_path(".catalog.migrating.json");
+
+        if tmp_segments_dir.exists() {
+            let _ = std::fs::remove_dir_all(&tmp_segments_dir);
+        }
+        if tmp_catalog_path.exists() {
+            let _ = std::fs::remove_file(&tmp_catalog_path);
+        }
+        std::fs::create_dir_all(&tmp_segments_dir)?;
 
         for event in legacy_events {
             let line = to_canonical_string(&serde_json::to_value(&event)?)?;
             let line_len = line.len() as u64 + 1;
-            self.ensure_segment_storage()?;
-            self.roll_segment_if_needed(&mut catalog, line_len, &event)?;
+            self.roll_segment_if_needed_for_dir(&mut catalog, line_len, &event, &tmp_segments_dir)?;
             let active_segment = catalog
                 .active_segment_mut()
                 .ok_or("INVALID_SEGMENT: missing active segment during migration")?;
-            let segment_path = self.segment_path(&active_segment.file_name);
+            let segment_path = tmp_segments_dir.join(&active_segment.file_name);
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -432,7 +441,20 @@ impl AppendOnlyEventLog {
             catalog.head_digest = event.digest.clone();
         }
 
-        self.write_catalog(&catalog)?;
+        let value = serde_json::to_value(&catalog)?;
+        let canonical = to_canonical_string(&value)?;
+        std::fs::write(&tmp_catalog_path, canonical)?;
+
+        if self.segments_dir().exists() {
+            let _ = std::fs::remove_dir_all(self.segments_dir());
+        }
+        std::fs::rename(&tmp_segments_dir, self.segments_dir())?;
+        std::fs::rename(&tmp_catalog_path, self.catalog_path())?;
+
+        if self.path.exists() {
+            let _ = std::fs::rename(&self.path, self.derived_path(".legacy.jsonl"));
+        }
+
         Ok(())
     }
 
@@ -448,6 +470,23 @@ impl AppendOnlyEventLog {
             .truncate(true)
             .write(true)
             .open(self.segment_path(file_name))?;
+        writeln!(file, "{SEGMENT_PREFIX}{canonical}")?;
+        Ok(())
+    }
+
+    fn write_segment_header_to_dir(
+        &self,
+        segment_dir: &Path,
+        file_name: &str,
+        header: &SegmentHeader,
+    ) -> Result<(), Box<dyn Error>> {
+        let value = serde_json::to_value(header)?;
+        let canonical = to_canonical_string(&value)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(segment_dir.join(file_name))?;
         writeln!(file, "{SEGMENT_PREFIX}{canonical}")?;
         Ok(())
     }
@@ -492,6 +531,59 @@ impl AppendOnlyEventLog {
 
     fn segment_path(&self, file_name: &str) -> PathBuf {
         self.segments_dir().join(file_name)
+    }
+
+    fn roll_segment_if_needed_for_dir(
+        &self,
+        catalog: &mut SegmentCatalog,
+        next_line_len: u64,
+        event: &Event,
+        segment_dir: &Path,
+    ) -> Result<(), Box<dyn Error>> {
+        let needs_new_segment = match catalog.active_segment() {
+            None => true,
+            Some(segment) => {
+                segment.event_count >= catalog.max_events_per_segment
+                    || segment.size_bytes + next_line_len > catalog.max_bytes_per_segment
+            }
+        };
+
+        if !needs_new_segment {
+            return Ok(());
+        }
+
+        if let Some(active) = catalog.active_segment_mut() {
+            active.sealed = true;
+        }
+
+        let prev_segment = catalog
+            .segments
+            .last()
+            .map(|segment| segment.header().digest_hex())
+            .transpose()?;
+        let created_at = current_time_ms()?;
+        let segment_id = format!("seg-{}-{}", event.seq, created_at);
+        let file_name = format!("{segment_id}.jsonl");
+        let entry = SegmentCatalogEntry {
+            segment_id: segment_id.clone(),
+            file_name: file_name.clone(),
+            namespace: event.namespace.clone(),
+            seq_start: event.seq,
+            seq_end: event.seq.saturating_sub(1),
+            first_digest: event.digest.clone(),
+            last_digest: catalog.head_digest.clone(),
+            prev_segment,
+            created_at,
+            protocol_ver: PROTOCOL_VERSION.to_string(),
+            sealed: false,
+            event_count: 0,
+            size_bytes: 0,
+        };
+        let header = entry.header();
+        self.write_segment_header_to_dir(segment_dir, &file_name, &header)?;
+        catalog.active_segment_id = Some(segment_id);
+        catalog.segments.push(entry);
+        Ok(())
     }
 
     fn derived_path(&self, suffix: &str) -> PathBuf {
