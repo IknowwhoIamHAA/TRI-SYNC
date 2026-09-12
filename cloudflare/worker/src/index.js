@@ -169,6 +169,14 @@ async function stripeWebhook(request, env) {
     return json({ received: true, ignored: true });
   }
 
+  if (event.livemode !== true) {
+    return json({
+      received: true,
+      ignored: true,
+      reason: "test_mode_event"
+    });
+  }
+
   const session = event.data.object;
   const email = session.customer_details?.email;
   const tier = session.metadata?.tier || "unknown";
@@ -257,7 +265,7 @@ async function generateLicenseKey(sessionId, email, tier) {
 
 async function sendLicenseEmail(email, licenseKey, tier, env) {
   const payload = {
-    from: "TRI-SYNC <support@trisync.dev>",
+    from: env.RESEND_FROM_EMAIL || "TRI-SYNC <support@trisync.dev>",
     to: email,
     subject: "Your TRI-SYNC License Key",
     html: `
@@ -273,7 +281,7 @@ async function sendLicenseEmail(email, licenseKey, tier, env) {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${env.RESEND_API_KEY}`,
+      "Authorization": `******
       "Content-Type": "application/json"
     },
     body: JSON.stringify(payload)
