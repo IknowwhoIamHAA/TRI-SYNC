@@ -6,7 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::errors::{ProtocolAction, ProtocolError, ProtocolErrorReason, ProtocolPhase, ProtocolResult};
+use crate::errors::{
+    ProtocolAction, ProtocolError, ProtocolErrorReason, ProtocolPhase, ProtocolResult,
+};
 use crate::event::{Event, EventType, ZERO_DIGEST_HEX};
 use crate::event_log::AppendOnlyEventLog;
 use crate::replay::ReplayEngine;
@@ -516,9 +518,10 @@ pub fn build_view_model_from_events(
     namespace_filter: Option<&str>,
     compare_planes: bool,
 ) -> ViewModel {
-    let mut namespaces: Vec<String> = BTreeSet::from_iter(events.iter().map(|e| e.namespace.clone()))
-        .into_iter()
-        .collect();
+    let mut namespaces: Vec<String> =
+        BTreeSet::from_iter(events.iter().map(|e| e.namespace.clone()))
+            .into_iter()
+            .collect();
     if namespaces.is_empty() {
         namespaces.push("none".to_string());
     }
@@ -569,7 +572,10 @@ pub fn build_view_model_from_events(
         });
     }
 
-    let global_verification = if planes.iter().any(|plane| plane.verification.status == "failed") {
+    let global_verification = if planes
+        .iter()
+        .any(|plane| plane.verification.status == "failed")
+    {
         planes
             .iter()
             .find(|plane| plane.verification.status == "failed")
@@ -733,7 +739,12 @@ fn analyze_namespace_events(namespace: &str, events: &[Event]) -> NamespacePlane
     }
 }
 
-fn mark_failure(event: &mut VisualEvent, reason: String, expected: Option<String>, actual: Option<String>) {
+fn mark_failure(
+    event: &mut VisualEvent,
+    reason: String,
+    expected: Option<String>,
+    actual: Option<String>,
+) {
     event.status = "failed".to_string();
     event.failure = Some(FailureDetail {
         reason,
@@ -881,7 +892,12 @@ mod tests {
             None,
         )
         .expect("b0");
-        let all = build_view_model_from_events(Path::new("/tmp/events.jsonl"), &[a0.clone(), b0.clone()], None, true);
+        let all = build_view_model_from_events(
+            Path::new("/tmp/events.jsonl"),
+            &[a0.clone(), b0.clone()],
+            None,
+            true,
+        );
         assert_eq!(all.planes.len(), 2);
         let filtered = build_view_model_from_events(
             Path::new("/tmp/events.jsonl"),
