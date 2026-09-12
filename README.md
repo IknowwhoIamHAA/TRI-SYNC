@@ -14,7 +14,7 @@ TRI‑SYNC is a compliance-first Rust runtime for reproducible state, immutable 
 
 Core verification, replay, and local single-tenant workflows are free without a license key. Commercial production mode, automated compliance reporting, and enterprise multi-tenant deployments require a commercial license.
 
-**Start a free 7-day trial or purchase a 1-month license key ($29/month):**
+**Start the $29/month subscription (includes a 7-day free trial):**
 
 ```
 https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
@@ -137,7 +137,7 @@ Operational meaning of a broken link:
 | Step | Action |
 |---|---|
 | 1 | Run `tri-sync verify`, `tri-sync replay`, or a local single-tenant workflow for free |
-| 2 | For enterprise features, [start a trial or subscribe](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
+| 2 | For enterprise features, [start the $29/month subscription with 7-day free trial](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
 | 3 | `export TRISYNC_LICENSE_KEY=<your-key>` then use `--production` or `tri-sync report` |
 
 If an enterprise feature is requested without a valid key, `tri-sync` prints a clear error and exits before modifying state.
