@@ -86,6 +86,9 @@ tri-sync example --log /tmp/example.jsonl
 
 # Generate a licensed automated compliance report
 tri-sync report --log events.jsonl
+
+# Launch local read-only forensic viewer for a JSONL log
+tri-sync viewer --log events.jsonl --host 127.0.0.1 --port 8787
 ```
 
 `--tick` (default `0`) sets the logical tick number on the event. Ticks must be monotonically non-decreasing within a namespace.
@@ -100,6 +103,30 @@ root_digest=768e154f...
 ```
 
 Exit code `0` means the log is valid. Exit code `1` means a protocol violation was detected (sequence gap, digest mismatch, duplicate event, etc.).
+
+### Local forensic viewer (`viewer`)
+
+`viewer` starts a local web UI that is strictly read-only:
+- accepts only `.jsonl` log paths
+- exposes only GET routes
+- never appends, edits, seals, or mutates TRI-SYNC state
+
+Run:
+
+```bash
+tri-sync viewer --log events.jsonl --host 127.0.0.1 --port 8787
+```
+
+Open the printed `viewer_url`. The UI shows:
+- chain timeline (`prev_digest -> digest`) per sequence
+- namespace planes (single namespace or side-by-side compare)
+- deterministic drift breakpoint at the exact failed node (`DIGEST_MISMATCH`, `SEQ_GAP`, namespace/replay errors)
+- expected vs actual digest values in a failure callout
+- inspection pane for seq/tick/type/key/root digest/timestamp/error fields and neighboring chain context
+
+Operational meaning of a broken link:
+- the chain is cryptographically inconsistent at that node
+- downstream verification cannot be trusted until the failing event/log segment is investigated or quarantined
 
 ---
 

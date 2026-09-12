@@ -89,6 +89,14 @@ enum Commands {
         #[arg(long)]
         log: PathBuf,
     },
+    Viewer {
+        #[arg(long)]
+        log: PathBuf,
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        #[arg(long, default_value_t = 8787)]
+        port: u16,
+    },
 }
 
 fn main() {
@@ -465,6 +473,9 @@ fn run() -> ProtocolResult<()> {
                     )
                 })?
             );
+        }
+        Commands::Viewer { log, host, port } => {
+            tri_sync::viewer::serve_local_viewer(&log, &host, port)?;
         }
     }
 

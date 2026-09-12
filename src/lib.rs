@@ -9,4 +9,5 @@ pub mod key;
 pub mod license;
 pub mod replay;
 pub mod state_map;
+pub mod viewer;
 pub mod wasm;
