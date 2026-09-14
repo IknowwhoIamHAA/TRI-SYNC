@@ -314,7 +314,7 @@ fn run() -> Result<(), CliError> {
                         .iter()
                         .rev()
                         .take_while(|event| event.event_type != EventType::TickSeal)
-                        .count() as u32
+                        .count() as u32,
                     digest.clone(),
                     prev,
                     now_ms,
