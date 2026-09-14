@@ -84,7 +84,12 @@ impl ReplayCheckpoint {
             snapshot,
             next_sequence: seal.seq + 1,
             prev_event_digest: seal.digest.clone(),
-            last_seal_timestamp_ms: seal.timestamp_ms,
+            last_seal_timestamp_ms: Some(seal.timestamp_ms.ok_or_else(|| {
+                ProtocolViolationError::invalid_event_format(
+                    Some(seal.seq),
+                    format!("TICK_SEAL missing timestamp_ms at seq {}", seal.seq),
+                )
+            })?),
         })
     }
 }
