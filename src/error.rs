@@ -65,7 +65,8 @@ impl ProtocolViolationError {
             Self::SequenceGap { .. }
             | Self::DigestMismatch { .. }
             | Self::InvalidEventFormat { .. } => 4,
-            Self::SequenceCollision { .. } | Self::NamespaceBreach { .. } => 5,
+            Self::SequenceCollision { .. } => 4,
+            Self::NamespaceBreach { .. } => 5,
             Self::StateMismatch { .. } | Self::MissingTickSeal { .. } => 6,
         }
     }
