@@ -58,8 +58,9 @@ enum Commands {
         #[arg(long)]
         log: PathBuf,
     },
-    /// Verify an event log: replay from genesis, print the final root digest,
-    /// and exit 0 on success or 1 if the log is invalid.
+    /// Verify an event log: replay from genesis (or from a trusted checkpoint),
+    /// print the final root digest, and exit 0 on success or a structured
+    /// protocol-specific nonzero code if the log is invalid.
     Verify {
         #[arg(long)]
         log: PathBuf,
