@@ -1,22 +1,21 @@
 name = "trisync-license-worker"
-main = "src/index.js"
-
+main = "cloudflare/worker/src/index.js"
 compatibility_date = "2026-08-29"
 
 # ---------------------------------------------------------------------------
-# Preview / Local Development
-# These can stay as placeholders unless you want preview KV.
+# Top-level (dev / local preview) — uses placeholder KV ids.
 # ---------------------------------------------------------------------------
 [[kv_namespaces]]
 binding = "ISSUED_KEYS"
-id = "REPLACE_WITH_YOUR_PREVIEW_ISSUED_KEYS_KV_NAMESPACE_ID"
+id = "513255134bf44c74882832e17c6eed30"
 
 [[kv_namespaces]]
 binding = "MARKETING_CONTACTS"
-id = "REPLACE_WITH_YOUR_PREVIEW_MARKETING_CONTACTS_KV_NAMESPACE_ID"
+id = "4e6e64d6c4ee413591a2911fc2f1e4b3"
+
 
 # ---------------------------------------------------------------------------
-# Staging (optional)
+# Staging environment
 # ---------------------------------------------------------------------------
 [env.staging]
 name = "tri-sync-worker-staging"
@@ -30,18 +29,14 @@ binding = "MARKETING_CONTACTS"
 id = "REPLACE_WITH_YOUR_STAGING_MARKETING_CONTACTS_KV_NAMESPACE_ID"
 
 # ---------------------------------------------------------------------------
-# Production — THIS is what Cloudflare CI deploys
+# Production environment
 # ---------------------------------------------------------------------------
 [env.production]
 name = "trisync-license-worker"
-
-# Routes are intentionally managed in Cloudflare Dashboard:
-#   api.trisync.dev/*
-#   trisync.dev/marketing/*
-#   trisync.dev/health
-#   trisync.dev/validate
-#   trisync.dev/trial
-#   trisync.dev/webhook
+# Routes are intentionally managed in the Cloudflare dashboard for
+# Workers Builds compatibility. Keep these route mappings configured there:
+#   api.trisync.dev/*, trisync.dev/marketing/*, trisync.dev/health,
+#   trisync.dev/validate, trisync.dev/trial, trisync.dev/webhook.
 
 [[env.production.kv_namespaces]]
 binding = "ISSUED_KEYS"
