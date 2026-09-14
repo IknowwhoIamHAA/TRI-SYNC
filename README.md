@@ -1,9 +1,9 @@
 # **TRI‑SYNC**
 ### *The compliance-first deterministic runtime for auditable AI and regulated workflows.*
 
-TRI‑SYNC is a compliance-first Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It supports teams aligning AI workflows with California AI governance expectations and regulated-data controls.
+TRI‑SYNC is a compliance-first Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It supports teams that need cryptographically verified audit trails, deterministic state tracking, and cloud-neutral deployment flexibility.
 
-> **v1.0.0 — Protocol frozen. Production-ready.**  
+> **v1.3.0 — Protocol frozen. Production-ready.**  
 > The wire format is stable. Any two conforming implementations produce byte-for-byte identical state.
 
 ---
@@ -72,8 +72,12 @@ tri-sync delete \
   --key job-status \
   --tick 2
 
-# Verify the log and print the final root digest (exit 1 on any protocol violation)
+# Verify the log and print the final root digest
 tri-sync verify --log events.jsonl
+
+# Resume verification from a trusted prior TICK_SEAL checkpoint root
+tri-sync verify --log events.jsonl \
+  --checkpoint-root 768e154f...
 
 # Replay the log and print final state as canonical JSON
 tri-sync replay --log events.jsonl
@@ -99,7 +103,15 @@ events=3
 root_digest=768e154f...
 ```
 
-Exit code `0` means the log is valid. Exit code `1` means a protocol violation was detected (sequence gap, digest mismatch, duplicate event, etc.).
+Exit code `0` means the log is valid.
+
+Protocol violations are emitted to `stderr` as JSON with distinct exit codes:
+
+| Exit code | Category | Examples |
+|---|---|---|
+| `4` | Sequence / digest / format | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat` |
+| `5` | Namespace isolation | `NamespaceBreach` |
+| `6` | Checkpoint / replayed state | `StateMismatch`, `MissingTickSeal` |
 
 ---
 
@@ -159,7 +171,7 @@ TRI-SYNC is also usable as a Rust library for embedding deterministic state into
 ```toml
 # Cargo.toml
 [dependencies]
-tri-sync = { git = "https://github.com/IknowwhoIamHAA/TRI-SYNC", tag = "v1.0.0" }
+tri-sync = { git = "https://github.com/IknowwhoIamHAA/TRI-SYNC", tag = "v1.3.0" }
 ```
 
 ```rust
@@ -178,6 +190,35 @@ log.append(&event)?;
 let state = ReplayEngine::replay(&log.load()?)?;
 println!("root_digest = {}", state.root_digest_hex()?);
 ```
+
+### Custom storage backends
+
+`tri_sync::backend::EventLogBackend` isolates replay and verification logic from
+storage concerns. TRI-SYNC includes:
+
+- `FileSystemBackend` — wraps the current append-only JSONL file log
+- `InMemoryBackend` — lightweight backend for tests and rapid iteration
+
+Custom backends only need to implement:
+
+```rust
+use tri_sync::backend::EventLogBackend;
+use tri_sync::error::ProtocolViolationError;
+use tri_sync::event::Event;
+
+struct CustomBackend;
+
+impl EventLogBackend for CustomBackend {
+    fn append(&self, _event: &Event) -> Result<(), ProtocolViolationError> { Ok(()) }
+    fn load(&self) -> Result<Vec<Event>, ProtocolViolationError> { Ok(Vec::new()) }
+    fn next_sequence(&self) -> Result<u64, ProtocolViolationError> { Ok(0) }
+    fn lock_for_write(&self) -> Result<(), ProtocolViolationError> { Ok(()) }
+}
+```
+
+Checkpoint verification stores verified snapshot caches beside the log so later
+`verify --checkpoint-root <digest>` runs can replay only the tail after the
+trusted `TICK_SEAL`.
 
 Library use requires a commercial license. See [docs/licensing.md](docs/licensing.md).
 
@@ -203,11 +244,14 @@ Library use requires a commercial license. See [docs/licensing.md](docs/licensin
 
 TRI-SYNC is purpose-built for regulated and high-assurance environments:
 
-- **Finance** — auditable order books, settlement reconciliation, regulatory reporting
-- **Healthcare** — HIPAA-compliant AI audit logs, clinical decision trails
+- **Finance** — Agentic SOC 2 Type II Processing Integrity evidence, internal model risk management, auditable order books
+- **Healthcare** — cryptographically verified clinical decision trails and controlled automation audit logs
 - **Insurance** — deterministic claims processing, reproducible underwriting
-- **Government** — tamper-proof record systems, verifiable processing pipelines
 - **AI Platforms** — reproducible inference logs, multi-agent coordination
+
+Frontier-scale AI risk tracking is a separate segment for elite labs operating under
+specialized governance frameworks; general enterprise positioning remains centered on
+processing integrity, internal MRM, and portable auditability.
 
 **Learn more:** [docs/product.md](docs/product.md)
 
@@ -219,6 +263,7 @@ TRI-SYNC is purpose-built for regulated and high-assurance environments:
 |---|---|
 | [SPEC.md](SPEC.md) | Full normative protocol specification |
 | [docs/product.md](docs/product.md) | Product overview, use cases, guarantees |
+| [docs/differentiation.md](docs/differentiation.md) | TRI-SYNC vs CloudTrail, Object Lock, and vendor-native integrity features |
 | [docs/licensing.md](docs/licensing.md) | Licensing flow, tiers, FAQ |
 | [docs/cross-language-determinism.md](docs/cross-language-determinism.md) | Wire format, test vectors, conformance checklist |
 | [invariants.md](invariants.md) | All protocol invariants |
@@ -293,10 +338,10 @@ Customer activates:
 
 ## Project Status
 
-**v1.0.0 — Protocol frozen. Production-ready.**
+**v1.3.0 — Protocol frozen. Production-ready.**
 
 - ✅ Wire format frozen — no breaking changes after v1.0.0
-- ✅ 110 tests pass
+- ✅ Rust test suite expanded for checkpoint replay, backends, and CLI compliance errors
 - ✅ CodeQL: 0 security alerts
 - ✅ No TODOs or FIXMEs in protocol-critical code
 - ✅ Cross-language determinism test vector pinned: `768e154f…`
