@@ -309,7 +309,11 @@ fn run() -> Result<(), CliError> {
                     seq,
                     tick,
                     ns,
-                    events.len() as u32,
+                    events
+                        .iter()
+                        .rev()
+                        .take_while(|event| event.event_type != EventType::TickSeal)
+                        .count() as u32
                     digest.clone(),
                     prev,
                     now_ms,
