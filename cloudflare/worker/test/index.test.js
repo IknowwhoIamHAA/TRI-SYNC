@@ -1,4 +1,4 @@
-import assert from "node:assert";
+import assert from "node:assert/strict";
 import test from "node:test";
 import worker from "../src/index.js";
 
@@ -7,15 +7,33 @@ function createMockEnv() {
   const marketing = new Map();
 
   return {
-    ISSUED_KEYS: {
-      get: async (key) => issued.get(key) || null,
-      put: async (key, value) => { issued.set(key, value); }
-    },
-    MARKETING_CONTACTS: {
-      get: async (key) => marketing.get(key) || null,
-      put: async (key, value) => { marketing.set(key, value); }
-    }
+   stores: { issued, marketing },
+   ISSUED_KEYS: {
+     get: async (key) => issued.get(key) ?? null,
+     put: async (key, value) => {
+       issued.set(key, value);
+     }
+   },
+   MARKETING_CONTACTS: {
+     get: async (key) => marketing.get(key) ?? null,
+     put: async (key, value) => {
+       marketing.set(key, value);
+     }
+   }
   };
+}
+
+function createJsonRequest(path, body, init = {}) {
+  return new Request(`https://api.trisync.dev${path}`, {
+   method: "POST",
+   headers: { "Content-Type": "application/json", ...init.headers },
+   ...init,
+   body: JSON.stringify(body)
+  });
+}
+
+async function readJson(response) {
+  return response.json();
 }
 
 test("health endpoint", async () => {
@@ -23,7 +41,7 @@ test("health endpoint", async () => {
   const res = await worker.fetch(req, createMockEnv());
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.headers.get("access-control-allow-origin"), "https://www.trisync.dev");
-  const data = await res.json();
+  const data = await readJson(res);
   assert.strictEqual(data.status, "ok");
 });
 
@@ -45,30 +63,37 @@ test("accepts the trial request CORS preflight", async () => {
 
 test("request 7-day trial key", async () => {
   const env = createMockEnv();
-  const req = new Request("https://api.trisync.dev/trial", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "developer@example.com" })
-  });
+  const req = createJsonRequest("/trial", { email: " Developer@Example.com " });
 
   const res = await worker.fetch(req, env);
   assert.strictEqual(res.status, 200);
-  const data = await res.json();
+  const data = await readJson(res);
   assert.strictEqual(data.ok, true);
   assert.strictEqual(data.tier, "trial");
   assert.match(data.license_key, /^TRI-[0-9A-F]{8}-[0-9A-F]{8}-[0-9A-F]{8}$/);
   assert.ok(data.expires_at);
+  assert.strictEqual(data.email_sent, false);
+
+  const issuedRecord = JSON.parse(env.stores.issued.get(data.license_key));
+  assert.deepStrictEqual(issuedRecord.email, "developer@example.com");
+  assert.deepStrictEqual(issuedRecord.tier, "trial");
+  assert.deepStrictEqual(issuedRecord.status, "active");
+
+  const marketingRecord = JSON.parse(env.stores.marketing.get("developer@example.com"));
+  assert.deepStrictEqual(marketingRecord, {
+    email: "developer@example.com",
+    tier: "trial",
+    source: "trial_request",
+    created_at: marketingRecord.created_at,
+    expires_at: marketingRecord.expires_at
+  });
 
   // Validate the newly generated trial key
-  const valReq = new Request("https://api.trisync.dev/validate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ license_key: data.license_key })
-  });
+  const valReq = createJsonRequest("/validate", { license_key: data.license_key });
 
   const valRes = await worker.fetch(valReq, env);
   assert.strictEqual(valRes.status, 200);
-  const valData = await valRes.json();
+  const valData = await readJson(valRes);
   assert.strictEqual(valData.valid, true);
   assert.strictEqual(valData.status, "active");
   assert.strictEqual(valData.tier, "trial");
@@ -76,14 +101,11 @@ test("request 7-day trial key", async () => {
 
 test("rejects invalid trial email", async () => {
   const env = createMockEnv();
-  const req = new Request("https://api.trisync.dev/trial", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "invalid-email" })
-  });
+  const req = createJsonRequest("/trial", { email: "invalid-email" });
 
   const res = await worker.fetch(req, env);
   assert.strictEqual(res.status, 400);
+  assert.deepStrictEqual(await readJson(res), { error: "valid email required" });
 });
 
 test("detects expired trial key", async () => {
@@ -102,15 +124,32 @@ test("detects expired trial key", async () => {
     })
   );
 
-  const valReq = new Request("https://api.trisync.dev/validate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ license_key: expiredKey })
-  });
+  const valReq = createJsonRequest("/validate", { license_key: expiredKey });
 
   const valRes = await worker.fetch(valReq, env);
   assert.strictEqual(valRes.status, 200);
-  const valData = await valRes.json();
+  const valData = await readJson(valRes);
   assert.strictEqual(valData.valid, false);
   assert.strictEqual(valData.status, "expired");
+});
+
+test("rejects missing license_key payload", async () => {
+  const req = createJsonRequest("/validate", {});
+
+  const res = await worker.fetch(req, createMockEnv());
+  assert.strictEqual(res.status, 400);
+  assert.deepStrictEqual(await readJson(res), { error: "license_key required" });
+});
+
+test("returns not_found for unknown license keys", async () => {
+  const req = createJsonRequest("/validate", {
+    license_key: "TRI-AAAAAAAA-BBBBBBBB-CCCCCCCC"
+  });
+
+  const res = await worker.fetch(req, createMockEnv());
+  assert.strictEqual(res.status, 404);
+  assert.deepStrictEqual(await readJson(res), {
+    valid: false,
+    status: "not_found"
+  });
 });
