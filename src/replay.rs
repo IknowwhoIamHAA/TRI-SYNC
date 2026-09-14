@@ -80,7 +80,7 @@ impl ReplayCheckpoint {
 
         Ok(Self {
             root_digest: seal_root.clone(),
-            checkpoint_tick: snapshot.tick,
+            checkpoint_tick: seal.tick,
             snapshot,
             next_sequence: seal.seq + 1,
             prev_event_digest: seal.digest.clone(),
