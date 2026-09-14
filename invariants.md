@@ -27,7 +27,7 @@
 - All logs: strictly append-only
 - File locking: `append()` acquires an exclusive OS-level lock on a `.lock` sidecar file before
   any write; dropped (not unlocked) after the write completes
-- `SegmentHeader.seq_end` is updated atomically after every append via `.tmp` + `rename`
+- Tail metadata is atomically persisted via catalog write-to-`.tmp` + `rename`; segment files remain append-only and are not rewritten after seal
 - All replay: deterministic — identical input always produces identical output
 
 ## Replay

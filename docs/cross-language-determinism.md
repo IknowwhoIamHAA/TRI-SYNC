@@ -219,8 +219,9 @@ OS-level exclusive advisory lock before any read-validate-write operation.
 The reference implementation uses a `.lock` sidecar file (e.g., `log.jsonl.lock`)
 and `flock(2)` / `LockFileEx` (Windows). Readers do not acquire the lock.
 
-After each append, `SegmentHeader.seq_end` **MUST** be updated atomically
-via write-to-`.tmp` + `rename` (POSIX atomic on the same filesystem).
+After each append, tail metadata **MUST** be persisted atomically via the
+segment catalog write-to-`.tmp` + `rename` flow (POSIX atomic on the same
+filesystem). Segment files are immutable once sealed.
 
 ---
 

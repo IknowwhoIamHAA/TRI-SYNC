@@ -196,7 +196,7 @@ println!("root_digest = {}", state.root_digest_hex()?);
 `tri_sync::backend::EventLogBackend` isolates replay and verification logic from
 storage concerns. TRI-SYNC includes:
 
-- `FileSystemBackend` — wraps the current append-only JSONL file log
+- `FileSystemBackend` — wraps the segmented append-only event log backed by `<log>.catalog.json` and `<log>.segments/`
 - `InMemoryBackend` — lightweight backend for tests and rapid iteration
 
 Custom backends only need to implement:

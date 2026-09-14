@@ -10,8 +10,8 @@
    - `EventLogBackend` — pluggable storage trait with `append`, `load`, `next_sequence`,
      and `lock_for_write`.
    - `FileSystemBackend` — wraps `AppendOnlyEventLog`, acquires an exclusive OS-level
-     lock on a `.lock` sidecar before each append, and updates `SegmentHeader.seq_end`
-     atomically via `.tmp` + `rename`.
+     lock on a `.lock` sidecar before each append, appends to immutable segment files,
+     and atomically persists tail metadata through the sidecar catalog.
    - `InMemoryBackend` — test/iteration backend with no filesystem dependency.
    - `ReplayEngine` — pure protocol logic over event slices; can replay from genesis or
      resume from a trusted `TICK_SEAL` snapshot checkpoint.
