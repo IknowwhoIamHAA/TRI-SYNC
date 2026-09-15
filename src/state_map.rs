@@ -152,13 +152,10 @@ impl BinaryStateMap {
     }
 
     pub fn to_binary(&self) -> Result<Vec<u8>, String> {
-        let mut entries: Vec<(&String, &BsmValue)> = self.inner.iter().collect();
-        entries.sort_by(|(ka, _), (kb, _)| ka.as_bytes().cmp(kb.as_bytes()));
-
         let mut out = Vec::new();
-        out.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+        out.extend_from_slice(&(self.inner.len() as u32).to_be_bytes());
 
-        for (key, value) in entries {
+        for (key, value) in &self.inner {
             if key.len() > u16::MAX as usize {
                 return Err("key too long for wire format".to_string());
             }
@@ -225,7 +222,7 @@ impl BinaryStateMap {
     }
 
     pub fn value_digest_hex(value: &BsmValue) -> Result<String, String> {
-        normalize_value(value.clone())?;
+        validate_value(value)?;
         let mut encoded = vec![value.type_tag()];
         encode_value_payload(value, &mut encoded)?;
         Ok(sha256_hex(&encoded))
@@ -271,7 +268,7 @@ impl BinaryStateMap {
     }
 
     fn insert_checked(&mut self, key: String, value: BsmValue) -> Result<(), String> {
-        let value = normalize_value(value)?;
+        validate_value(&value)?;
         if let Some(existing) = self.inner.get(&key) {
             if existing.type_tag() != value.type_tag() {
                 return Err(format!(
@@ -288,7 +285,7 @@ impl BinaryStateMap {
 
     fn validate_invariants(&self) -> Result<(), String> {
         for value in self.inner.values() {
-            normalize_value(value.clone())?;
+            validate_value(value)?;
         }
         Ok(())
     }
@@ -427,13 +424,13 @@ fn decode_value_payload(
     }
 }
 
-fn normalize_value(value: BsmValue) -> Result<BsmValue, String> {
+fn validate_value(value: &BsmValue) -> Result<(), String> {
     match value {
         BsmValue::Decimal(decimal) => {
             validate_decimal(&decimal)?;
-            Ok(BsmValue::Decimal(decimal))
+            Ok(())
         }
-        other => Ok(other),
+        _ => Ok(()),
     }
 }
 

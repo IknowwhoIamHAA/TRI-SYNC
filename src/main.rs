@@ -5,11 +5,10 @@ use tri_sync::backend::{EventLogBackend, FileSystemBackend};
 use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
 use tri_sync::error::ProtocolViolationError;
-use tri_sync::event::{Event, EventType, ZERO_DIGEST_HEX};
-use tri_sync::hex::decode_hex;
+use tri_sync::event::Event;
 use tri_sync::license;
-use tri_sync::replay::ReplayEngine;
-use tri_sync::state_map::{BinaryStateMap, BsmValue, StateSnapshot};
+use tri_sync::replay::{ReplayEngine, verify_events};
+use tri_sync::state_map::BsmValue;
 
 #[derive(Parser)]
 #[command(name = "tri-sync")]
@@ -153,12 +152,9 @@ fn run() -> Result<(), CliError> {
             let backend = FileSystemBackend::open(log.clone());
             backend.lock_for_write()?;
 
-            let seq = backend.next_sequence()?;
-            let prev = backend
-                .load()?
-                .last()
-                .map(|event| event.digest.clone())
-                .unwrap_or_else(|| ZERO_DIGEST_HEX.to_string());
+            let tail = backend.tail_metadata()?;
+            let seq = tail.next_seq;
+            let prev = tail.prev_digest;
 
             let event = Event::state_write(
                 seq,
@@ -194,12 +190,9 @@ fn run() -> Result<(), CliError> {
             let backend = FileSystemBackend::open(log.clone());
             backend.lock_for_write()?;
 
-            let seq = backend.next_sequence()?;
-            let prev = backend
-                .load()?
-                .last()
-                .map(|event| event.digest.clone())
-                .unwrap_or_else(|| ZERO_DIGEST_HEX.to_string());
+            let tail = backend.tail_metadata()?;
+            let seq = tail.next_seq;
+            let prev = tail.prev_digest;
 
             let event = Event::state_delete(
                 seq,
@@ -378,93 +371,6 @@ fn require_enterprise_feature(feature: &str, namespace: String, tick: u64) -> Re
     let _ = (namespace, tick);
     license::require_enterprise_detailed(feature).map_err(CliError::from)?;
     Ok(())
-}
-
-struct VerifyOutcome {
-    state: BinaryStateMap,
-    total_events: usize,
-    checkpoint_root: Option<String>,
-    verified_events: Option<usize>,
-}
-
-fn verify_events(
-    events: &[Event],
-    checkpoint_root: Option<&str>,
-) -> Result<VerifyOutcome, ProtocolViolationError> {
-    if let Some(root) = checkpoint_root {
-        let matches: Vec<usize> = events
-            .iter()
-            .enumerate()
-            .filter(|(_, event)| {
-                event.event_type == EventType::TickSeal
-                    && event.root_digest.as_deref() == Some(root)
-            })
-            .map(|(index, _)| index)
-            .collect();
-
-        if matches.is_empty() {
-            return Err(ProtocolViolationError::missing_tick_seal(
-                Some(root.to_string()),
-                format!("MISSING_TICK_SEAL: no TICK_SEAL with root_digest {root}"),
-            ));
-        }
-
-        if matches.len() > 1 {
-            return Err(ProtocolViolationError::state_mismatch(
-                None,
-                Some(root.to_string()),
-                None,
-                Some(root.to_string()),
-                format!(
-                    "STATE_MISMATCH: checkpoint_root {root} is ambiguous because multiple TICK_SEAL events match it"
-                ),
-            ));
-        }
-
-        let checkpoint_index = matches[0];
-        let checkpoint_event = &events[checkpoint_index];
-        let checkpoint_state = ReplayEngine::replay(&events[..=checkpoint_index])?;
-
-        let snapshot = StateSnapshot {
-            namespace: checkpoint_event.namespace.clone(),
-            tick: checkpoint_event.tick,
-            seal_seq: checkpoint_event.seq,
-            seal_timestamp_ms: checkpoint_event.timestamp_ms.ok_or_else(|| {
-                ProtocolViolationError::invalid_event_format(
-                    Some(checkpoint_event.seq),
-                    "TICK_SEAL missing timestamp_ms",
-                )
-            })?,
-            root_digest: decode_array_32(root)?,
-            seal_digest: decode_array_32(&checkpoint_event.digest)?,
-            state: checkpoint_state,
-        };
-
-        let tail = &events[checkpoint_index + 1..];
-        let outcome = ReplayEngine::replay_with_snapshot(tail, Some(snapshot))?;
-        return Ok(VerifyOutcome {
-            state: outcome.state,
-            total_events: events.len(),
-            checkpoint_root: Some(root.to_string()),
-            verified_events: Some(tail.len()),
-        });
-    }
-
-    let outcome = ReplayEngine::replay_with_snapshot(events, None)?;
-    Ok(VerifyOutcome {
-        state: outcome.state,
-        total_events: events.len(),
-        checkpoint_root: None,
-        verified_events: None,
-    })
-}
-
-fn decode_array_32(value: &str) -> Result<[u8; 32], ProtocolViolationError> {
-    let bytes = decode_hex(value)
-        .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
-    bytes
-        .try_into()
-        .map_err(|_| ProtocolViolationError::invalid_event_format(None, "expected 32-byte digest"))
 }
 
 fn report_protocol_failure(err: &ProtocolViolationError) {

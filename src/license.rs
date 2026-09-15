@@ -8,6 +8,7 @@ use std::env;
 use std::fmt::{self, Display, Formatter};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -29,6 +30,14 @@ pub const PUBLIC_KEY: &str = "acaa9e80d4fd6ffcce6a633f45e28fc91e0d9b851e44e6c72c
 const DEFAULT_LICENSE_FILE_NAME: &str = "license.json";
 const PROJECT_LICENSE_FILE_NAME: &str = "trisync-license.json";
 const LICENSE_SCHEMA_VERSION: u32 = 1;
+const MAX_LICENSE_BYTES: usize = 64 * 1024;
+static VERIFYING_KEY: LazyLock<Result<VerifyingKey, String>> = LazyLock::new(|| {
+    let public_key_bytes = decode_hex(PUBLIC_KEY).map_err(|err| err.to_string())?;
+    let public_key_bytes: [u8; 32] = public_key_bytes
+        .try_into()
+        .map_err(|_| "Embedded TRI-SYNC public key must be exactly 32 bytes.".to_string())?;
+    VerifyingKey::from_bytes(&public_key_bytes).map_err(|err| err.to_string())
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LicenseMode {
@@ -149,14 +158,17 @@ impl Display for LicenseError {
     }
 }
 
-/// Return the current runtime mode.
-pub fn current_mode() -> LicenseMode {
-    match load_license_source(None) {
-        Ok(Some(loaded)) => verify_loaded_license(&loaded, None)
-            .map(LicenseMode::Licensed)
-            .unwrap_or(LicenseMode::Community),
-        Ok(None) | Err(_) => LicenseMode::Community,
+/// Return the current runtime mode, preserving validation failures.
+pub fn current_mode() -> Result<LicenseMode, LicenseError> {
+    match load_license_source(None)? {
+        Some(loaded) => verify_loaded_license(&loaded, None).map(LicenseMode::Licensed),
+        None => Ok(LicenseMode::Community),
     }
+}
+
+/// Return the current runtime mode, falling back to community mode on invalid input.
+pub fn current_mode_or_community() -> LicenseMode {
+    current_mode().unwrap_or(LicenseMode::Community)
 }
 
 /// Require a valid commercial license for an enterprise feature.
@@ -202,6 +214,7 @@ pub fn check_detailed(feature: Option<String>) -> Result<(), LicenseError> {
 fn load_license_source(feature: Option<String>) -> Result<Option<LoadedLicense>, LicenseError> {
     match env::var(LICENSE_ENV) {
         Ok(value) if !value.trim().is_empty() => {
+            validate_license_size(value.len(), &format!("${LICENSE_ENV}"), feature.clone())?;
             return Ok(Some(LoadedLicense {
                 contents: value,
                 source: format!("${LICENSE_ENV}"),
@@ -239,6 +252,8 @@ fn load_license_source(feature: Option<String>) -> Result<Option<LoadedLicense>,
             ),
         });
     }
+
+    validate_license_size(content.len(), &path.display().to_string(), feature.clone())?;
 
     Ok(Some(LoadedLicense {
         contents: content,
@@ -291,6 +306,36 @@ fn parse_license_document(
         });
     }
 
+    if parsed.issued_at > unix_timestamp_now() {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!(
+                "The TRI-SYNC license from {source} has issued_at {} in the future.",
+                parsed.issued_at
+            ),
+        });
+    }
+
+    if parsed.features.iter().any(|feature_name| feature_name.trim().is_empty()) {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!(
+                "The TRI-SYNC license from {source} contains an empty feature name."
+            ),
+        });
+    }
+
+    if let Some(expires_at) = parsed.expires_at
+        && expires_at < parsed.issued_at
+    {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!(
+                "The TRI-SYNC license from {source} expires before it is issued."
+            ),
+        });
+    }
+
     Ok(parsed)
 }
 
@@ -311,24 +356,12 @@ fn verify_license_document(
             detail: format!("Failed to canonicalize TRI-SYNC license payload from {source}: {err}"),
         })?;
 
-    let public_key_bytes =
-        decode_hex(PUBLIC_KEY).map_err(|err| LicenseError::InvalidLicenseKey {
+    let verifying_key = VERIFYING_KEY
+        .as_ref()
+        .map_err(|err| LicenseError::InvalidLicenseKey {
             feature: feature.clone(),
             detail: format!("Embedded TRI-SYNC public key is invalid: {err}"),
         })?;
-    let public_key_bytes: [u8; 32] =
-        public_key_bytes
-            .try_into()
-            .map_err(|_| LicenseError::InvalidLicenseKey {
-                feature: feature.clone(),
-                detail: "Embedded TRI-SYNC public key must be exactly 32 bytes.".to_string(),
-            })?;
-    let verifying_key = VerifyingKey::from_bytes(&public_key_bytes).map_err(|err| {
-        LicenseError::InvalidLicenseKey {
-            feature: feature.clone(),
-            detail: format!("Embedded TRI-SYNC public key is invalid: {err}"),
-        }
-    })?;
 
     let signature_bytes =
         decode_hex(document.signature.trim()).map_err(|err| LicenseError::InvalidLicenseKey {
@@ -362,6 +395,25 @@ fn verify_license_document(
         }
     }
 
+    if let Some(requested_feature) = feature.as_deref() {
+        let Some(required_capability) = required_license_feature(requested_feature) else {
+            return Ok(());
+        };
+
+        if !document
+            .features
+            .iter()
+            .any(|granted| granted == required_capability)
+        {
+            return Err(LicenseError::InvalidLicenseKey {
+                feature,
+                detail: format!(
+                    "The TRI-SYNC license in {source} does not grant the required capability `{required_capability}` for {requested_feature}."
+                ),
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -376,6 +428,30 @@ fn unix_timestamp_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn validate_license_size(
+    byte_len: usize,
+    source: &str,
+    feature: Option<String>,
+) -> Result<(), LicenseError> {
+    if byte_len > MAX_LICENSE_BYTES {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!(
+                "TRI-SYNC license input from {source} is too large ({byte_len} bytes); the maximum supported size is {MAX_LICENSE_BYTES} bytes."
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn required_license_feature(feature: &str) -> Option<&'static str> {
+    match feature {
+        "Commercial production execution" => Some("commercial-production"),
+        "Automated compliance reporting" => Some("compliance-reporting"),
+        _ => None,
+    }
 }
 
 fn resolve_license_file_path() -> Option<PathBuf> {
@@ -417,7 +493,8 @@ mod tests {
 
     use super::{
         LICENSE_ENV, LICENSE_FILE_ENV, LICENSE_SCHEMA_VERSION, LicenseDocument, LicenseError,
-        LicenseMode, check, check_detailed, current_mode, require_enterprise,
+        LicenseMode, check, check_detailed, current_mode, current_mode_or_community,
+        require_enterprise,
         require_enterprise_detailed,
     };
 
@@ -480,7 +557,7 @@ mod tests {
     #[test]
     fn current_mode_defaults_to_community_without_license() {
         with_env_locked(&[(LICENSE_ENV, None), (LICENSE_FILE_ENV, None)], || {
-            assert_eq!(current_mode(), LicenseMode::Community);
+            assert_eq!(current_mode().expect("mode"), LicenseMode::Community);
         });
     }
 
@@ -498,7 +575,7 @@ mod tests {
             &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
             || {
                 check_detailed(None).expect("valid license should verify");
-                match current_mode() {
+                match current_mode().expect("mode") {
                     LicenseMode::Licensed(license) => assert_eq!(license.tier, "enterprise"),
                     LicenseMode::Community => panic!("expected licensed mode"),
                 }
@@ -577,5 +654,65 @@ mod tests {
             let err = check().expect_err("empty environment license should fail");
             assert!(err.contains("empty"), "got: {err}");
         });
+    }
+
+    #[test]
+    fn current_mode_or_community_suppresses_invalid_license_material() {
+        with_env_locked(&[(LICENSE_ENV, Some("{")), (LICENSE_FILE_ENV, None)], || {
+            assert_eq!(current_mode_or_community(), LicenseMode::Community);
+        });
+    }
+
+    #[test]
+    fn current_mode_reports_invalid_license_material() {
+        with_env_locked(&[(LICENSE_ENV, Some("{")), (LICENSE_FILE_ENV, None)], || {
+            let err = current_mode().expect_err("invalid license should be reported");
+            assert!(matches!(err, LicenseError::InvalidLicenseKey { .. }));
+        });
+    }
+
+    #[test]
+    fn rejects_future_issued_at_license() {
+        let mut document: LicenseDocument =
+            serde_json::from_str(&signed_license_json(Some(u64::MAX))).expect("license json");
+        document.issued_at = u64::MAX;
+        let payload = serde_json::to_value(document.payload()).expect("payload value");
+        let canonical_payload =
+            crate::canonical_json::to_canonical_string(&payload).expect("payload json");
+        let signing_key = SigningKey::from_bytes(&TEST_PRIVATE_KEY);
+        let signature = signing_key.sign(canonical_payload.as_bytes());
+        document.signature = crate::hex::encode_hex(&signature.to_bytes());
+        let license = serde_json::to_string(&document).expect("license");
+
+        with_env_locked(
+            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+            || {
+                let err = check_detailed(None).expect_err("future license must fail");
+                assert!(err.to_string().contains("future"), "got: {err}");
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_requested_feature_not_granted_by_license() {
+        let mut document: LicenseDocument =
+            serde_json::from_str(&signed_license_json(Some(u64::MAX))).expect("license json");
+        document.features = vec!["commercial-production".to_string()];
+        let payload = serde_json::to_value(document.payload()).expect("payload value");
+        let canonical_payload =
+            crate::canonical_json::to_canonical_string(&payload).expect("payload json");
+        let signing_key = SigningKey::from_bytes(&TEST_PRIVATE_KEY);
+        let signature = signing_key.sign(canonical_payload.as_bytes());
+        document.signature = crate::hex::encode_hex(&signature.to_bytes());
+        let license = serde_json::to_string(&document).expect("license");
+
+        with_env_locked(
+            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+            || {
+                let err = require_enterprise_detailed("Automated compliance reporting")
+                    .expect_err("missing granted feature must fail");
+                assert!(err.to_string().contains("does not grant"), "got: {err}");
+            },
+        );
     }
 }
