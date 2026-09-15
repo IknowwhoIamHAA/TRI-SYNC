@@ -1,10 +1,12 @@
 # **TRI‑SYNC**
 ### *The compliance-first deterministic runtime for auditable AI and regulated workflows.*
 
-TRI‑SYNC is an open-source core Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It is self-contained, offline-first, and runs with zero server requirements.
+TRI‑SYNC is the definitive standalone Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It is self-contained, offline-first, and runs with zero server requirements.
 
 > **v1.3.0 — Protocol frozen. Production-ready.**  
 > The wire format is stable. Any two conforming implementations produce byte-for-byte identical state.
+>
+> **Release status:** This is the authoritative zero-infrastructure production release of TRI-SYNC. Pre-1.0 experimental and serverless iterations are retired and should not be used for new deployments.
 
 ---
 
@@ -127,7 +129,14 @@ If no license is supplied, TRI-SYNC stays in community mode. If an enterprise fe
 For containers or air-gapped systems, mount the same signed JSON document locally or inject it directly through `TRISYNC_LICENSE`.
 
 **Full licensing details:** [docs/licensing.md](docs/licensing.md)  
-**Commercial terms:** [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md)
+**Commercial terms:** [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md)  
+**Repository license notice:** [LICENSE](LICENSE)
+
+### Historical status
+
+- `v1.0.0` is the frozen public protocol baseline.
+- Pre-1.0 experimental/serverless repository states are retired and preserved only as historical development milestones.
+- The current maintained architecture is the standalone Rust runtime with local append-only storage and offline Ed25519 license verification.
 
 ---
 
@@ -217,7 +226,7 @@ Checkpoint verification stores verified snapshot caches beside the log so later 
 |---|---|
 | **Deterministic replay** | Identical ordered logs → identical state, any machine, any time |
 | **SHA-256 digest chain** | Every event is self-hashed and chained; tampering is instantly detectable |
-| **Canonical JSON** | RFC 8785 encoding — no locale drift, no ambiguity, no surprises |
+| **Canonical JSON** | Deterministic canonical JSON with UTF-8 byte-order keys and no locale drift |
 | **Binary state map** | Big-endian, lexicographically ordered; root digest proves complete state |
 | **TICK_SEAL checkpoints** | Root digest snapshots after every logical tick for independent verification |
 | **Multi-tenant isolation** | Namespace-prefixed keys; cross-tenant access is a protocol violation |

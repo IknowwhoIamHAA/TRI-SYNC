@@ -1,0 +1,30 @@
+TRI-SYNC Repository License Notice
+==================================
+
+Copyright (c) 2026 TRI-SYNC.
+All rights reserved.
+
+This repository's definitive production release is governed by the commercial
+license terms in `COMMERCIAL_LICENSE.md`.
+
+Release model
+-------------
+
+- The TRI-SYNC runtime is a standalone, zero-infrastructure system.
+- Enterprise-only capabilities are unlocked offline with signed Ed25519 license
+  documents verified locally by the runtime.
+- The protocol specification in `SPEC.md` is published for interoperability and
+  conformance purposes.
+
+Historical notice
+-----------------
+
+Pre-1.0 experimental and serverless iterations of TRI-SYNC are retired and are
+not the authoritative production architecture.
+
+Authoritative documents
+-----------------------
+
+- `COMMERCIAL_LICENSE.md` — commercial terms for the software
+- `docs/licensing.md` — operational offline licensing details
+- `SPEC.md` — normative protocol specification

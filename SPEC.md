@@ -60,6 +60,11 @@ This document does not specify network transport, node discovery, leader
 election, or physical storage layout, except where these interact directly
 with canonical state or log integrity.
 
+Licensing, activation workflows, and commercial feature gating are also out of
+scope for this protocol specification. Conforming implementations **MUST NOT**
+depend on hosted control planes or serverless services to preserve protocol
+correctness, replayability, or offline verification.
+
 ### 1.3 Conformance Language
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,

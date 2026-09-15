@@ -27,6 +27,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+*.log
 
 # Node dependencies
 **/node_modules/

@@ -25,16 +25,21 @@ You may **not**:
 4. **Remove or alter** any license notices, copyright notices, or activation
    mechanisms in the Software.
 5. **Use enterprise features or the Software in commercial production** without
-   a valid, activated license key. Public verification, replay, foundational
-   event logging, and local single-tenant workflows remain available without a
-   license key.
-6. **Share, publish, or transfer** your license key(s) to any third party.
+   a valid signed offline license document. Public verification, replay,
+   foundational event logging, and local single-tenant workflows remain
+   available without a commercial license.
+6. **Share, publish, or transfer** your signed license document(s) to any third
+   party.
 
-## License Key Activation
+## Offline License Activation
 
 Each license includes a signed offline license document. Licenses are tied to the
 purchaser and must not be shared. TRI-SYNC reserves the right to revoke or refuse
 renewal for licenses that have been shared or misused.
+
+The runtime verifies these documents locally using an embedded Ed25519 public
+key. No hosted activation service, control plane, or serverless dependency is
+required for production use.
 
 ## Evaluation Use
 
@@ -80,6 +85,6 @@ For licensing inquiries, OEM agreements, and enterprise pricing:
 
 ---
 
-*This license supersedes any prior open-source license notices that may appear
-in individual source files. The Apache 2.0 license text in the LICENSE file
-applies only to contributions made before the v1.0.0 commercial release.*
+*This license supersedes prior experimental or serverless release iterations.
+Pre-1.0 repository states are retired historical artifacts and are not the
+authoritative production architecture.*

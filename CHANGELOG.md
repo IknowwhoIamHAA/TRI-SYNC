@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 > **Backward-compatible additions only.** The v1.0.0 wire protocol is unchanged.  
 > All new features are opt-in. No breaking changes.
+>  
+> **Repository status:** This line is the definitive standalone production track. Earlier pre-1.0 experimental/serverless iterations are retired.
 
 ### Added
 
@@ -22,8 +24,9 @@ All notable changes to this project will be documented in this file.
   with a distinct exit code when a commercial feature is invoked without a valid key.
 
 #### License
-- Removed the `LICENSE` file (which had contained Apache 2.0 text) from the repository root.
-  `COMMERCIAL_LICENSE.md` is now the sole authoritative project license.
+- Replaced the legacy Apache 2.0 `LICENSE` text with the current repository
+  license notice aligned to `COMMERCIAL_LICENSE.md` and the offline-license
+  architecture.
 
 #### CLI
 - `inspect --log <path>` — Human-readable event log dump: prints each event's seq, type,
@@ -68,6 +71,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - `Cargo.toml`: crate/package version bumped to **1.3.0** while preserving the frozen
   **v1.0.0** wire protocol and segment `protocol_ver`.
+- Root `LICENSE` notice restored and aligned to the current commercial/offline-license architecture.
 - `README.md` and `architecture.md`: documented pluggable storage, checkpoint-based
   verification, structured protocol errors, and the open-core / enterprise split.
 - `Cargo.toml`: added `rust-version = "1.85"` (MSRV pin).
@@ -88,6 +92,10 @@ All notable changes to this project will be documented in this file.
 - All existing CLI subcommands (`apply`, `delete`, `replay`, `verify`, `export`, `digest`,
   `example`) are unchanged.
 
+### Retired release lines
+- Pre-1.0 experimental snapshots (`v0.1.x`, `v0.2.x`, and related serverless/cloud-assisted iterations) are deprecated for production use and retained only for repository history.
+- `v1.0.0+` is the only supported public release line for the hardened standalone architecture.
+
 ---
 
 ## [1.0.0] - 2026-08-26 — **Protocol Frozen. Production-Ready.**
@@ -95,6 +103,8 @@ All notable changes to this project will be documented in this file.
 > **This is the stable, commercially-licensed release of TRI-SYNC.**  
 > The v1.0.0 wire protocol is frozen. All future versions will be backward-compatible.  
 > 100 tests pass. CodeQL: 0 alerts. No TODOs or FIXMEs in protocol-critical code.
+>
+> Pre-1.0 experimental/serverless iterations are retired and superseded by this standalone release line.
 
 ### Added
 - Public API freeze declaration for TRI-SYNC Runtime v1.0.0.
