@@ -24,10 +24,13 @@ function createMockEnv() {
 }
 
 function createJsonRequest(path, body, init = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Content-Type", "application/json");
+
   return new Request(`https://api.trisync.dev${path}`, {
    method: "POST",
-   headers: { "Content-Type": "application/json", ...init.headers },
    ...init,
+   headers,
    body: JSON.stringify(body)
   });
 }
@@ -35,6 +38,15 @@ function createJsonRequest(path, body, init = {}) {
 async function readJson(response) {
   return response.json();
 }
+
+test("createJsonRequest preserves JSON content type with custom headers", () => {
+  const req = createJsonRequest("/trial", { email: "developer@example.com" }, {
+    headers: { Authorization: "******" }
+  });
+
+  assert.strictEqual(req.headers.get("content-type"), "application/json");
+  assert.strictEqual(req.headers.get("authorization"), "******");
+});
 
 test("health endpoint", async () => {
   const req = new Request("https://api.trisync.dev/health");
@@ -84,9 +96,10 @@ test("request 7-day trial key", async () => {
     email: "developer@example.com",
     tier: "trial",
     source: "trial_request",
-    created_at: marketingRecord.created_at,
-    expires_at: marketingRecord.expires_at
+    created_at: issuedRecord.created_at,
+    expires_at: issuedRecord.expires_at
   });
+  assert.strictEqual(marketingRecord.expires_at, data.expires_at);
 
   // Validate the newly generated trial key
   const valReq = createJsonRequest("/validate", { license_key: data.license_key });
