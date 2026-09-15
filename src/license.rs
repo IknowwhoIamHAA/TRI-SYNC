@@ -316,12 +316,14 @@ fn parse_license_document(
         });
     }
 
-    if parsed.features.iter().any(|feature_name| feature_name.trim().is_empty()) {
+    if parsed
+        .features
+        .iter()
+        .any(|feature_name| feature_name.trim().is_empty())
+    {
         return Err(LicenseError::InvalidLicenseKey {
             feature,
-            detail: format!(
-                "The TRI-SYNC license from {source} contains an empty feature name."
-            ),
+            detail: format!("The TRI-SYNC license from {source} contains an empty feature name."),
         });
     }
 
@@ -330,9 +332,7 @@ fn parse_license_document(
     {
         return Err(LicenseError::InvalidLicenseKey {
             feature,
-            detail: format!(
-                "The TRI-SYNC license from {source} expires before it is issued."
-            ),
+            detail: format!("The TRI-SYNC license from {source} expires before it is issued."),
         });
     }
 
@@ -406,7 +406,7 @@ fn verify_license_document(
             .any(|granted| granted == required_capability)
         {
             return Err(LicenseError::InvalidLicenseKey {
-                feature,
+                feature: feature.clone(),
                 detail: format!(
                     "The TRI-SYNC license in {source} does not grant the required capability `{required_capability}` for {requested_feature}."
                 ),
@@ -494,8 +494,7 @@ mod tests {
     use super::{
         LICENSE_ENV, LICENSE_FILE_ENV, LICENSE_SCHEMA_VERSION, LicenseDocument, LicenseError,
         LicenseMode, check, check_detailed, current_mode, current_mode_or_community,
-        require_enterprise,
-        require_enterprise_detailed,
+        require_enterprise, require_enterprise_detailed,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -616,7 +615,7 @@ mod tests {
 
     #[test]
     fn rejects_expired_license() {
-        let license = signed_license_json(Some(1));
+        let license = signed_license_json(Some(1_757_913_601));
         with_env_locked(
             &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
             || {
@@ -658,17 +657,23 @@ mod tests {
 
     #[test]
     fn current_mode_or_community_suppresses_invalid_license_material() {
-        with_env_locked(&[(LICENSE_ENV, Some("{")), (LICENSE_FILE_ENV, None)], || {
-            assert_eq!(current_mode_or_community(), LicenseMode::Community);
-        });
+        with_env_locked(
+            &[(LICENSE_ENV, Some("{")), (LICENSE_FILE_ENV, None)],
+            || {
+                assert_eq!(current_mode_or_community(), LicenseMode::Community);
+            },
+        );
     }
 
     #[test]
     fn current_mode_reports_invalid_license_material() {
-        with_env_locked(&[(LICENSE_ENV, Some("{")), (LICENSE_FILE_ENV, None)], || {
-            let err = current_mode().expect_err("invalid license should be reported");
-            assert!(matches!(err, LicenseError::InvalidLicenseKey { .. }));
-        });
+        with_env_locked(
+            &[(LICENSE_ENV, Some("{")), (LICENSE_FILE_ENV, None)],
+            || {
+                let err = current_mode().expect_err("invalid license should be reported");
+                assert!(matches!(err, LicenseError::InvalidLicenseKey { .. }));
+            },
+        );
     }
 
     #[test]

@@ -72,7 +72,9 @@ impl FileSystemBackend {
             .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
     }
 
-    pub fn tail_metadata(&self) -> Result<crate::event_log::LogTailMetadata, ProtocolViolationError> {
+    pub fn tail_metadata(
+        &self,
+    ) -> Result<crate::event_log::LogTailMetadata, ProtocolViolationError> {
         self.inner
             .tail_metadata()
             .map_err(|err| ProtocolViolationError::from_message(err.to_string()))

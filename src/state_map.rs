@@ -427,7 +427,7 @@ fn decode_value_payload(
 fn validate_value(value: &BsmValue) -> Result<(), String> {
     match value {
         BsmValue::Decimal(decimal) => {
-            validate_decimal(&decimal)?;
+            validate_decimal(decimal)?;
             Ok(())
         }
         _ => Ok(()),

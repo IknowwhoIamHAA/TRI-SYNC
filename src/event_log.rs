@@ -917,7 +917,8 @@ mod tests {
 
         let catalog_path = PathBuf::from(format!("{}.catalog.json", path.display()));
         let mut catalog: Value =
-            serde_json::from_str(&fs::read_to_string(&catalog_path).expect("catalog")).expect("json");
+            serde_json::from_str(&fs::read_to_string(&catalog_path).expect("catalog"))
+                .expect("json");
         catalog["next_seq"] = Value::from(1u64);
         catalog["head_digest"] = Value::String(first.digest.clone());
         catalog["segments"][0]["seq_end"] = Value::from(0u64);
@@ -983,7 +984,10 @@ mod tests {
 
         let err = log.load().expect_err("corrupt segment must fail");
         let message = err.to_string();
-        assert!(message.contains(&segment_path.display().to_string()), "got: {message}");
+        assert!(
+            message.contains(&segment_path.display().to_string()),
+            "got: {message}"
+        );
         assert!(message.contains("line 3"), "got: {message}");
     }
 }
