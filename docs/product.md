@@ -118,7 +118,7 @@ This makes TRI-SYNC a mathematically verifiable utility rather than a black-box 
 
 ## Access Model
 
-The public core is available without a key: foundational event logging, `tri-sync verify`, `tri-sync replay`, and local single-tenant execution. Enterprise authorization through `TRISYNC_LICENSE_KEY` is required for commercial production mode, automated compliance export reporting, and scaled multi-tenant enterprise deployment. For core enterprise positioning, TRI-SYNC is aligned to Agentic SOC 2 Type II Processing Integrity, internal Model Risk Management workflows, and cryptographically verified audit trails. It does not itself constitute legal advice or a certification.
+The public core is available without a license: foundational event logging, `tri-sync verify`, `tri-sync replay`, and local single-tenant execution. Enterprise authorization through a signed offline `TRISYNC_LICENSE` document is required for commercial production mode and automated compliance export reporting. For core enterprise positioning, TRI-SYNC is aligned to Agentic SOC 2 Type II Processing Integrity, internal Model Risk Management workflows, and cryptographically verified audit trails. It does not itself constitute legal advice or a certification.
 
 ---
 

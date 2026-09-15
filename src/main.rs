@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
-use tri_sync::errors::{ProtocolError, ProtocolErrorReason, ProtocolPhase, ProtocolAction};
+use tri_sync::errors::{ProtocolAction, ProtocolError, ProtocolErrorReason, ProtocolPhase};
 use tri_sync::event::Event;
 use tri_sync::event_log::FileSystemBackend;
 use tri_sync::license;
-use tri_sync::replay::{ReplayEngine, ProtocolViolationError};
+use tri_sync::replay::{ProtocolViolationError, ReplayEngine};
 use tri_sync::state_map::BsmValue;
 
 #[derive(Parser)]
@@ -116,13 +116,11 @@ fn run() -> Result<(), ProtocolViolationError> {
             production,
         } => {
             if production {
-                license::require_enterprise("Commercial production execution")
-                    .map_err(|err| ProtocolViolationError::InvalidEventFormat {
-                        detail: err.to_string(),
-                        seq: 0,
-                        namespace: namespace.clone(),
-                        tick,
-                    })?;
+                require_enterprise_feature(
+                    "Commercial production execution",
+                    namespace.clone(),
+                    tick,
+                )?;
             }
 
             let backend = FileSystemBackend::new(log.clone());
@@ -154,13 +152,11 @@ fn run() -> Result<(), ProtocolViolationError> {
             production,
         } => {
             if production {
-                license::require_enterprise("Commercial production execution")
-                    .map_err(|err| ProtocolViolationError::InvalidEventFormat {
-                        detail: err.to_string(),
-                        seq: 0,
-                        namespace: namespace.clone(),
-                        tick,
-                    })?;
+                require_enterprise_feature(
+                    "Commercial production execution",
+                    namespace.clone(),
+                    tick,
+                )?;
             }
 
             let backend = FileSystemBackend::new(log.clone());
@@ -188,13 +184,14 @@ fn run() -> Result<(), ProtocolViolationError> {
             let engine = ReplayEngine::new(backend);
             let state = engine.replay()?;
 
-            let json_value = serde_json::to_value(state.to_json_value())
-                .map_err(|err| ProtocolViolationError::InvalidEventFormat {
+            let json_value = serde_json::to_value(state.to_json_value()).map_err(|err| {
+                ProtocolViolationError::InvalidEventFormat {
                     detail: err.to_string(),
                     seq: 0,
                     namespace: "".into(),
                     tick: 0,
-                })?;
+                }
+            })?;
 
             println!("{}", to_canonical_string(&json_value).unwrap());
         }
@@ -310,13 +307,7 @@ fn run() -> Result<(), ProtocolViolationError> {
         }
 
         Commands::Report { log } => {
-            license::require_enterprise("Automated compliance reporting")
-                .map_err(|err| ProtocolViolationError::InvalidEventFormat {
-                    detail: err.to_string(),
-                    seq: 0,
-                    namespace: "".into(),
-                    tick: 0,
-                })?;
+            require_enterprise_feature("Automated compliance reporting", "".into(), 0)?;
 
             let backend = FileSystemBackend::new(log.clone());
             let engine = ReplayEngine::new(backend);
@@ -354,6 +345,19 @@ fn run() -> Result<(), ProtocolViolationError> {
     }
 
     Ok(())
+}
+
+fn require_enterprise_feature(
+    feature: &str,
+    namespace: String,
+    tick: u64,
+) -> Result<(), ProtocolViolationError> {
+    license::require_enterprise(feature).map_err(|err| ProtocolViolationError::InvalidEventFormat {
+        detail: err,
+        seq: 0,
+        namespace,
+        tick,
+    })
 }
 
 fn report_failure(err: &ProtocolError) {

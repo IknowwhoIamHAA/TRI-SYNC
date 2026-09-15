@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
-use crate::event::{BatchOpType, Event, EventType, event_value_to_bsm, ZERO_DIGEST_HEX};
+use crate::event::{BatchOpType, Event, EventType, ZERO_DIGEST_HEX, event_value_to_bsm};
+use crate::hex::encode_hex;
 use crate::key::validate_key;
 use crate::state_map::{BinaryStateMap, BsmValue, StateSnapshot};
-use crate::hex::encode_hex;
 
-use super::ProtocolViolationError;
+use crate::error::ProtocolViolationError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayOutcome {
@@ -36,9 +36,7 @@ impl ReplayEngine {
 
         let has_snapshot = snapshot.is_some();
         let snapshot_ns = snapshot.as_ref().map(|s| s.namespace.clone());
-        let snapshot_prev_digest = snapshot
-            .as_ref()
-            .map(|s| encode_hex(&s.seal_digest));
+        let snapshot_prev_digest = snapshot.as_ref().map(|s| encode_hex(&s.seal_digest));
 
         let mut state = snapshot
             .as_ref()
@@ -63,11 +61,9 @@ impl ReplayEngine {
         let mut expected_namespace =
             snapshot_ns.or_else(|| events.first().map(|e| e.namespace.clone()));
 
-        let mut last_seal_timestamp_ms =
-            snapshot.as_ref().map(|s| s.seal_timestamp_ms);
+        let mut last_seal_timestamp_ms = snapshot.as_ref().map(|s| s.seal_timestamp_ms);
 
-        let mut max_tick_seen =
-            snapshot.as_ref().map_or(0, |s| s.tick);
+        let mut max_tick_seen = snapshot.as_ref().map_or(0, |s| s.tick);
 
         for event in events {
             // Namespace isolation
@@ -429,7 +425,10 @@ impl ReplayEngine {
 
             EventType::ProtocolError => {
                 return Err(ProtocolViolationError::ProtocolErrorEvent {
-                    code: event.error_code.clone().unwrap_or("UNKNOWN_PROTOCOL_ERROR".into()),
+                    code: event
+                        .error_code
+                        .clone()
+                        .unwrap_or("UNKNOWN_PROTOCOL_ERROR".into()),
                     detail: event.detail.clone(),
                     seq: event.seq,
                     namespace: event.namespace.clone(),

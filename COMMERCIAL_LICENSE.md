@@ -32,15 +32,15 @@ You may **not**:
 
 ## License Key Activation
 
-Each license includes one or more license key strings. Keys are tied to the
-purchaser and must not be shared. TRI-SYNC reserves the right to revoke keys
-that have been shared or misused.
+Each license includes a signed offline license document. Licenses are tied to the
+purchaser and must not be shared. TRI-SYNC reserves the right to revoke or refuse
+renewal for licenses that have been shared or misused.
 
 ## Evaluation Use
 
 Public verification, replay, foundational event logging, and local
-single-tenant workflows are available without a license key. A trial key is
-required only to evaluate restricted enterprise features.
+single-tenant workflows are available without a license. A signed evaluation
+license is required only to evaluate restricted enterprise features.
 
 ## Open Protocol
 

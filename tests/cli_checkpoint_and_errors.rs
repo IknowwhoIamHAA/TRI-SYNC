@@ -349,8 +349,8 @@ fn enterprise_gated_command_without_license_emits_json_error() {
     let log_path = temp.path().join("events.jsonl");
 
     let output = Command::new(tri_sync_bin())
-        .env_remove("TRISYNC_LICENSE_KEY")
-        .env_remove("TRISYNC_LICENSE_KEYS_FILE")
+        .env_remove("TRISYNC_LICENSE")
+        .env_remove("TRISYNC_LICENSE_FILE")
         .args(["report", "--log", log_path.to_str().expect("log path")])
         .output()
         .expect("run report");
