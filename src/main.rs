@@ -1,14 +1,15 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use tri_sync::backend::{EventLogBackend, FileSystemBackend};
 use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
-use tri_sync::errors::{ProtocolAction, ProtocolError, ProtocolErrorReason, ProtocolPhase};
-use tri_sync::event::Event;
-use tri_sync::event_log::FileSystemBackend;
+use tri_sync::error::ProtocolViolationError;
+use tri_sync::event::{Event, EventType, ZERO_DIGEST_HEX};
+use tri_sync::hex::decode_hex;
 use tri_sync::license;
-use tri_sync::replay::{ProtocolViolationError, ReplayEngine};
-use tri_sync::state_map::BsmValue;
+use tri_sync::replay::ReplayEngine;
+use tri_sync::state_map::{BinaryStateMap, BsmValue, StateSnapshot};
 
 #[derive(Parser)]
 #[command(name = "tri-sync")]
@@ -93,17 +94,43 @@ enum Commands {
 fn main() {
     let exit_code = match run() {
         Ok(()) => 0,
-        Err(violation) => {
-            let protocol_error = ProtocolError::from_violation(&violation);
-            report_failure(&protocol_error);
+        Err(CliError::Protocol(violation)) => {
+            report_protocol_failure(&violation);
             violation.exit_code()
+        }
+        Err(CliError::License(error)) => {
+            report_license_failure(&error);
+            error.exit_code()
         }
     };
 
     std::process::exit(exit_code);
 }
 
-fn run() -> Result<(), ProtocolViolationError> {
+enum CliError {
+    Protocol(ProtocolViolationError),
+    License(license::LicenseError),
+}
+
+impl From<ProtocolViolationError> for CliError {
+    fn from(value: ProtocolViolationError) -> Self {
+        Self::Protocol(value)
+    }
+}
+
+impl From<license::LicenseError> for CliError {
+    fn from(value: license::LicenseError) -> Self {
+        Self::License(value)
+    }
+}
+
+impl From<String> for CliError {
+    fn from(value: String) -> Self {
+        Self::Protocol(ProtocolViolationError::from_message(value))
+    }
+}
+
+fn run() -> Result<(), CliError> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -123,11 +150,15 @@ fn run() -> Result<(), ProtocolViolationError> {
                 )?;
             }
 
-            let backend = FileSystemBackend::new(log.clone());
+            let backend = FileSystemBackend::open(log.clone());
             backend.lock_for_write()?;
 
             let seq = backend.next_sequence()?;
-            let prev = backend.prev_digest()?;
+            let prev = backend
+                .load()?
+                .last()
+                .map(|event| event.digest.clone())
+                .unwrap_or_else(|| ZERO_DIGEST_HEX.to_string());
 
             let event = Event::state_write(
                 seq,
@@ -138,7 +169,8 @@ fn run() -> Result<(), ProtocolViolationError> {
                 false,
                 prev,
                 None,
-            )?;
+            )
+            .map_err(CliError::from)?;
 
             backend.append(&event)?;
             println!("appended STATE_WRITE at seq {}", event.seq);
@@ -159,11 +191,15 @@ fn run() -> Result<(), ProtocolViolationError> {
                 )?;
             }
 
-            let backend = FileSystemBackend::new(log.clone());
+            let backend = FileSystemBackend::open(log.clone());
             backend.lock_for_write()?;
 
             let seq = backend.next_sequence()?;
-            let prev = backend.prev_digest()?;
+            let prev = backend
+                .load()?
+                .last()
+                .map(|event| event.digest.clone())
+                .unwrap_or_else(|| ZERO_DIGEST_HEX.to_string());
 
             let event = Event::state_delete(
                 seq,
@@ -173,24 +209,20 @@ fn run() -> Result<(), ProtocolViolationError> {
                 None,
                 true,
                 prev,
-            )?;
+            )
+            .map_err(CliError::from)?;
 
             backend.append(&event)?;
             println!("appended STATE_DELETE at seq {}", event.seq);
         }
 
         Commands::Replay { log } => {
-            let backend = FileSystemBackend::new(log);
-            let engine = ReplayEngine::new(backend);
-            let state = engine.replay()?;
+            let backend = FileSystemBackend::open(log);
+            let events = backend.load()?;
+            let state = ReplayEngine::replay(&events)?;
 
             let json_value = serde_json::to_value(state.to_json_value()).map_err(|err| {
-                ProtocolViolationError::InvalidEventFormat {
-                    detail: err.to_string(),
-                    seq: 0,
-                    namespace: "".into(),
-                    tick: 0,
-                }
+                ProtocolViolationError::invalid_event_format(None, err.to_string())
             })?;
 
             println!("{}", to_canonical_string(&json_value).unwrap());
@@ -199,23 +231,24 @@ fn run() -> Result<(), ProtocolViolationError> {
         Commands::Verify {
             log,
             seal,
-            tick,
-            namespace,
+            tick: _tick,
+            namespace: _namespace,
             checkpoint_root,
         } => {
-            let backend = FileSystemBackend::new(log.clone());
-            let engine = ReplayEngine::new(backend);
-
-            let outcome = if let Some(root) = checkpoint_root {
-                engine.replay_from_checkpoint(&root)?
-            } else {
-                engine.replay_with_snapshot(&[], None)?
-            };
+            let backend = FileSystemBackend::open(log.clone());
+            let events = backend.load()?;
+            let outcome = verify_events(&events, checkpoint_root.as_deref())?;
 
             println!("OK");
             println!("log={}", log.display());
-            println!("events={}", outcome.state.len());
+            println!("events={}", outcome.total_events);
             println!("root_digest={}", outcome.state.root_digest_hex().unwrap());
+            if let Some(root) = outcome.checkpoint_root {
+                println!("checkpoint_root={root}");
+            }
+            if let Some(count) = outcome.verified_events {
+                println!("verified_events={count}");
+            }
 
             if seal {
                 // seal logic unchanged; uses backend.append()
@@ -224,26 +257,23 @@ fn run() -> Result<(), ProtocolViolationError> {
 
         Commands::Export { log, format } => {
             if format != "json" {
-                return Err(ProtocolViolationError::InvalidEventFormat {
-                    detail: format!("unsupported format '{format}'"),
-                    seq: 0,
-                    namespace: "".into(),
-                    tick: 0,
-                });
+                return Err(CliError::Protocol(
+                    ProtocolViolationError::invalid_event_format(
+                        None,
+                        format!("unsupported format '{format}'"),
+                    ),
+                ));
             }
 
-            let backend = FileSystemBackend::new(log);
+            let backend = FileSystemBackend::open(log);
             let events = backend.load()?;
 
             let arr: Vec<serde_json::Value> = events
                 .iter()
                 .map(serde_json::to_value)
                 .collect::<Result<_, _>>()
-                .map_err(|err| ProtocolViolationError::InvalidEventFormat {
-                    detail: err.to_string(),
-                    seq: 0,
-                    namespace: "".into(),
-                    tick: 0,
+                .map_err(|err| {
+                    ProtocolViolationError::invalid_event_format(None, err.to_string())
                 })?;
 
             let json = serde_json::to_value(arr).unwrap();
@@ -254,12 +284,12 @@ fn run() -> Result<(), ProtocolViolationError> {
             println!("{}", sha256_hex(input.as_bytes()));
         }
 
-        Commands::Example { log } => {
+        Commands::Example { log: _log } => {
             // example logic unchanged, but uses ProtocolViolationError
         }
 
         Commands::Inspect { log } => {
-            let backend = FileSystemBackend::new(log);
+            let backend = FileSystemBackend::open(log);
             let events = backend.load()?;
 
             if events.is_empty() {
@@ -286,7 +316,7 @@ fn run() -> Result<(), ProtocolViolationError> {
         }
 
         Commands::Status { log } => {
-            let backend = FileSystemBackend::new(log.clone());
+            let backend = FileSystemBackend::open(log.clone());
             let events = backend.load()?;
 
             let count = events.len();
@@ -296,8 +326,7 @@ fn run() -> Result<(), ProtocolViolationError> {
                 .map(|e| e.event_type == tri_sync::event::EventType::TickSeal)
                 .unwrap_or(false);
 
-            let engine = ReplayEngine::new(backend);
-            let replay_ok = engine.replay().is_ok();
+            let replay_ok = ReplayEngine::replay(&events).is_ok();
 
             println!("log={}", log.display());
             println!("events={count}");
@@ -309,11 +338,9 @@ fn run() -> Result<(), ProtocolViolationError> {
         Commands::Report { log } => {
             require_enterprise_feature("Automated compliance reporting", "".into(), 0)?;
 
-            let backend = FileSystemBackend::new(log.clone());
-            let engine = ReplayEngine::new(backend);
-
-            let state = engine.replay()?;
-            let events = engine.backend().load()?;
+            let backend = FileSystemBackend::open(log.clone());
+            let events = backend.load()?;
+            let state = ReplayEngine::replay(&events)?;
 
             let namespaces: std::collections::BTreeSet<&str> =
                 events.iter().map(|e| e.namespace.as_str()).collect();
@@ -347,24 +374,103 @@ fn run() -> Result<(), ProtocolViolationError> {
     Ok(())
 }
 
-fn require_enterprise_feature(
-    feature: &str,
-    namespace: String,
-    tick: u64,
-) -> Result<(), ProtocolViolationError> {
-    license::require_enterprise(feature).map_err(|err| ProtocolViolationError::InvalidEventFormat {
-        detail: err,
-        seq: 0,
-        namespace,
-        tick,
+fn require_enterprise_feature(feature: &str, namespace: String, tick: u64) -> Result<(), CliError> {
+    let _ = (namespace, tick);
+    license::require_enterprise_detailed(feature).map_err(CliError::from)?;
+    Ok(())
+}
+
+struct VerifyOutcome {
+    state: BinaryStateMap,
+    total_events: usize,
+    checkpoint_root: Option<String>,
+    verified_events: Option<usize>,
+}
+
+fn verify_events(
+    events: &[Event],
+    checkpoint_root: Option<&str>,
+) -> Result<VerifyOutcome, ProtocolViolationError> {
+    if let Some(root) = checkpoint_root {
+        let matches: Vec<usize> = events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| {
+                event.event_type == EventType::TickSeal
+                    && event.root_digest.as_deref() == Some(root)
+            })
+            .map(|(index, _)| index)
+            .collect();
+
+        if matches.is_empty() {
+            return Err(ProtocolViolationError::missing_tick_seal(
+                Some(root.to_string()),
+                format!("MISSING_TICK_SEAL: no TICK_SEAL with root_digest {root}"),
+            ));
+        }
+
+        if matches.len() > 1 {
+            return Err(ProtocolViolationError::state_mismatch(
+                None,
+                Some(root.to_string()),
+                None,
+                Some(root.to_string()),
+                format!(
+                    "STATE_MISMATCH: checkpoint_root {root} is ambiguous because multiple TICK_SEAL events match it"
+                ),
+            ));
+        }
+
+        let checkpoint_index = matches[0];
+        let checkpoint_event = &events[checkpoint_index];
+        let checkpoint_state = ReplayEngine::replay(&events[..=checkpoint_index])?;
+
+        let snapshot = StateSnapshot {
+            namespace: checkpoint_event.namespace.clone(),
+            tick: checkpoint_event.tick,
+            seal_seq: checkpoint_event.seq,
+            seal_timestamp_ms: checkpoint_event.timestamp_ms.ok_or_else(|| {
+                ProtocolViolationError::invalid_event_format(
+                    Some(checkpoint_event.seq),
+                    "TICK_SEAL missing timestamp_ms",
+                )
+            })?,
+            root_digest: decode_array_32(root)?,
+            seal_digest: decode_array_32(&checkpoint_event.digest)?,
+            state: checkpoint_state,
+        };
+
+        let tail = &events[checkpoint_index + 1..];
+        let outcome = ReplayEngine::replay_with_snapshot(tail, Some(snapshot))?;
+        return Ok(VerifyOutcome {
+            state: outcome.state,
+            total_events: events.len(),
+            checkpoint_root: Some(root.to_string()),
+            verified_events: Some(tail.len()),
+        });
+    }
+
+    let outcome = ReplayEngine::replay_with_snapshot(events, None)?;
+    Ok(VerifyOutcome {
+        state: outcome.state,
+        total_events: events.len(),
+        checkpoint_root: None,
+        verified_events: None,
     })
 }
 
-fn report_failure(err: &ProtocolError) {
-    let value = err.to_json_value();
-    if let Ok(rendered) = to_canonical_string(&value) {
-        eprintln!("{rendered}");
-    } else {
-        eprintln!("{err}");
-    }
+fn decode_array_32(value: &str) -> Result<[u8; 32], ProtocolViolationError> {
+    let bytes = decode_hex(value)
+        .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
+    bytes
+        .try_into()
+        .map_err(|_| ProtocolViolationError::invalid_event_format(None, "expected 32-byte digest"))
+}
+
+fn report_protocol_failure(err: &ProtocolViolationError) {
+    eprintln!("{}", err.to_stderr_json());
+}
+
+fn report_license_failure(err: &license::LicenseError) {
+    eprintln!("{}", err.to_stderr_json());
 }

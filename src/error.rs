@@ -18,6 +18,12 @@ pub enum ProtocolViolationError {
         seq: u64,
         detail: String,
     },
+    DuplicateEvent {
+        digest: String,
+        seq: u64,
+        namespace: String,
+        tick: u64,
+    },
     DigestMismatch {
         seq: Option<u64>,
         expected: Option<String>,
@@ -41,6 +47,34 @@ pub enum ProtocolViolationError {
         checkpoint_root: Option<String>,
         detail: String,
     },
+    TimestampRegression {
+        previous: u64,
+        current: u64,
+        seq: u64,
+        namespace: String,
+        tick: u64,
+    },
+    TickRegression {
+        previous: u64,
+        current: u64,
+        seq: u64,
+        namespace: String,
+        tick: u64,
+    },
+    CompactMismatch {
+        expected: String,
+        found: String,
+        seq: u64,
+        namespace: String,
+        tick: u64,
+    },
+    ProtocolErrorEvent {
+        code: String,
+        detail: Option<String>,
+        seq: u64,
+        namespace: String,
+        tick: u64,
+    },
     InvalidEventFormat {
         seq: Option<u64>,
         detail: String,
@@ -52,10 +86,15 @@ impl ProtocolViolationError {
         match self {
             Self::SequenceGap { .. } => "SEQ_GAP",
             Self::SequenceCollision { .. } => "SEQUENCE_COLLISION",
+            Self::DuplicateEvent { .. } => "DUPLICATE_EVENT",
             Self::DigestMismatch { .. } => "DIGEST_MISMATCH",
             Self::NamespaceBreach { .. } => "NAMESPACE_BREACH",
             Self::StateMismatch { .. } => "STATE_MISMATCH",
             Self::MissingTickSeal { .. } => "MISSING_TICK_SEAL",
+            Self::TimestampRegression { .. } => "TIMESTAMP_REGRESSION",
+            Self::TickRegression { .. } => "TICK_REGRESSION",
+            Self::CompactMismatch { .. } => "COMPACT_MISMATCH",
+            Self::ProtocolErrorEvent { .. } => "PROTOCOL_ERROR_EVENT",
             Self::InvalidEventFormat { .. } => "INVALID_EVENT_FORMAT",
         }
     }
@@ -64,10 +103,16 @@ impl ProtocolViolationError {
         match self {
             Self::SequenceGap { .. }
             | Self::DigestMismatch { .. }
-            | Self::InvalidEventFormat { .. } => 4,
-            Self::SequenceCollision { .. } => 4,
+            | Self::InvalidEventFormat { .. }
+            | Self::DuplicateEvent { .. }
+            | Self::ProtocolErrorEvent { .. } => 4,
+            Self::SequenceCollision { .. } => 5,
             Self::NamespaceBreach { .. } => 5,
-            Self::StateMismatch { .. } | Self::MissingTickSeal { .. } => 6,
+            Self::StateMismatch { .. }
+            | Self::MissingTickSeal { .. }
+            | Self::TimestampRegression { .. }
+            | Self::TickRegression { .. }
+            | Self::CompactMismatch { .. } => 6,
         }
     }
 
@@ -168,6 +213,15 @@ impl ProtocolViolationError {
             };
         }
 
+        if message.contains("DUPLICATE_EVENT") {
+            return Self::DuplicateEvent {
+                digest: String::new(),
+                seq: parse_seq(&message).unwrap_or(0),
+                namespace: String::new(),
+                tick: 0,
+            };
+        }
+
         if message.contains("DIGEST_MISMATCH") {
             return Self::DigestMismatch {
                 seq: parse_seq(&message),
@@ -188,11 +242,38 @@ impl ProtocolViolationError {
             || message.contains("COMPACT_FAIL")
             || message.contains("TYPE_MISMATCH")
             || message.contains("KEY_NOT_FOUND")
-            || message.contains("TIMESTAMP_REGRESSION")
-            || message.contains("TICK_REGRESSION")
-            || message.contains("PROTOCOL_ERROR")
         {
             return Self::state_mismatch(None, None, None, None, message);
+        }
+
+        if message.contains("TIMESTAMP_REGRESSION") {
+            return Self::TimestampRegression {
+                previous: 0,
+                current: 0,
+                seq: parse_seq(&message).unwrap_or(0),
+                namespace: String::new(),
+                tick: 0,
+            };
+        }
+
+        if message.contains("TICK_REGRESSION") {
+            return Self::TickRegression {
+                previous: 0,
+                current: 0,
+                seq: parse_seq(&message).unwrap_or(0),
+                namespace: String::new(),
+                tick: 0,
+            };
+        }
+
+        if message.contains("PROTOCOL_ERROR") {
+            return Self::ProtocolErrorEvent {
+                code: "PROTOCOL_ERROR".to_string(),
+                detail: Some(message),
+                seq: 0,
+                namespace: String::new(),
+                tick: 0,
+            };
         }
 
         Self::invalid_event_format(parse_seq(&message), message)
@@ -207,10 +288,65 @@ impl Display for ProtocolViolationError {
                 actual_seq,
             } => write!(f, "SEQ_GAP: expected seq {expected_seq}, got {actual_seq}"),
             Self::SequenceCollision { detail, .. } => f.write_str(detail),
+            Self::DuplicateEvent {
+                digest,
+                seq,
+                namespace,
+                tick,
+            } => write!(
+                f,
+                "DUPLICATE_EVENT: non-idempotent duplicate detected at seq {seq} (digest={digest}, namespace={namespace}, tick={tick})"
+            ),
             Self::DigestMismatch { detail, .. } => f.write_str(detail),
             Self::NamespaceBreach { detail, .. } => f.write_str(detail),
             Self::StateMismatch { detail, .. } => f.write_str(detail),
             Self::MissingTickSeal { detail, .. } => f.write_str(detail),
+            Self::TimestampRegression {
+                previous,
+                current,
+                seq,
+                namespace,
+                tick,
+            } => write!(
+                f,
+                "TIMESTAMP_REGRESSION: TICK_SEAL at seq {seq} has timestamp {current} < previous {previous} (namespace={namespace}, tick={tick})"
+            ),
+            Self::TickRegression {
+                previous,
+                current,
+                seq,
+                namespace,
+                tick,
+            } => write!(
+                f,
+                "TICK_REGRESSION: event at seq {seq} has tick {current} < previous max tick {previous} (namespace={namespace}, tick={tick})"
+            ),
+            Self::CompactMismatch {
+                expected,
+                found,
+                seq,
+                namespace,
+                tick,
+            } => write!(
+                f,
+                "COMPACT_MISMATCH: current state root {found} does not match snapshot_digest {expected} at seq {seq} (namespace={namespace}, tick={tick})"
+            ),
+            Self::ProtocolErrorEvent {
+                code,
+                detail,
+                seq,
+                namespace,
+                tick,
+            } => {
+                let suffix = detail
+                    .as_ref()
+                    .map(|d| format!(": {d}"))
+                    .unwrap_or_default();
+                write!(
+                    f,
+                    "PROTOCOL_ERROR_EVENT: at seq {seq}: {code}{suffix} (namespace={namespace}, tick={tick})"
+                )
+            }
             Self::InvalidEventFormat { detail, .. } => f.write_str(detail),
         }
     }
