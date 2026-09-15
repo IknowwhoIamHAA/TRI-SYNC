@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -178,7 +178,7 @@ impl AppendOnlyEventLog {
 
     pub fn load(&self) -> Result<Vec<Event>, Box<dyn Error>> {
         if self.catalog_path().exists() {
-            let catalog = self.read_catalog()?;
+            let catalog = self.read_catalog_reconciled()?;
             let mut events = Vec::new();
             for segment in self.ordered_segments(&catalog)? {
                 events.extend(self.load_segment_events(segment)?);
@@ -191,7 +191,7 @@ impl AppendOnlyEventLog {
 
     pub fn load_header(&self) -> Result<Option<SegmentHeader>, Box<dyn Error>> {
         if self.catalog_path().exists() {
-            let catalog = self.read_catalog()?;
+            let catalog = self.read_catalog_reconciled()?;
             return Ok(catalog.active_segment().map(|segment| segment.header()));
         }
 
@@ -218,7 +218,7 @@ impl AppendOnlyEventLog {
 
     pub fn tail_metadata(&self) -> Result<LogTailMetadata, Box<dyn Error>> {
         if self.catalog_path().exists() {
-            let catalog = self.read_catalog()?;
+            let catalog = self.read_catalog_reconciled()?;
             return Ok(LogTailMetadata {
                 next_seq: catalog.next_seq,
                 prev_digest: catalog.head_digest,
@@ -254,7 +254,7 @@ impl AppendOnlyEventLog {
     }
 
     fn append_segmented_under_lock(&self, event: &Event) -> Result<(), Box<dyn Error>> {
-        let mut catalog = self.read_catalog_optional()?.unwrap_or_else(|| {
+        let mut catalog = self.read_catalog_reconciled_optional()?.unwrap_or_else(|| {
             SegmentCatalog::new(self.max_events_per_segment, self.max_bytes_per_segment)
         });
 
@@ -368,15 +368,15 @@ impl AppendOnlyEventLog {
         segment: &SegmentCatalogEntry,
     ) -> Result<Vec<Event>, Box<dyn Error>> {
         let path = self.segment_path(&segment.file_name);
-        let file = File::open(path)?;
+        let file = File::open(&path)?;
         let mut events = Vec::new();
-        for line in BufReader::new(file).lines() {
+        for (line_number, line) in BufReader::new(file).lines().enumerate() {
             let line = line?;
             let line = line.trim();
             if line.is_empty() || line.starts_with(SEGMENT_PREFIX) {
                 continue;
             }
-            events.push(serde_json::from_str::<Event>(line)?);
+            events.push(parse_event_line(line, &path, line_number + 1)?);
         }
         Ok(events)
     }
@@ -388,13 +388,13 @@ impl AppendOnlyEventLog {
 
         let file = File::open(&self.path)?;
         let mut events = Vec::new();
-        for line in BufReader::new(file).lines() {
+        for (line_number, line) in BufReader::new(file).lines().enumerate() {
             let line = line?;
             let line = line.trim();
             if line.is_empty() || line.starts_with(SEGMENT_PREFIX) {
                 continue;
             }
-            events.push(serde_json::from_str::<Event>(line)?);
+            events.push(parse_event_line(line, &self.path, line_number + 1)?);
         }
         Ok(events)
     }
@@ -406,13 +406,13 @@ impl AppendOnlyEventLog {
 
         let file = File::open(&self.path)?;
         let mut last_event = None;
-        for line in BufReader::new(file).lines() {
+        for (line_number, line) in BufReader::new(file).lines().enumerate() {
             let line = line?;
             let line = line.trim();
             if line.is_empty() || line.starts_with(SEGMENT_PREFIX) {
                 continue;
             }
-            last_event = Some(serde_json::from_str::<Event>(line)?);
+            last_event = Some(parse_event_line(line, &self.path, line_number + 1)?);
         }
         Ok(last_event)
     }
@@ -514,16 +514,22 @@ impl AppendOnlyEventLog {
             .map_err(|err| -> Box<dyn Error> { Box::new(err) })
     }
 
-    fn read_catalog_optional(&self) -> Result<Option<SegmentCatalog>, Box<dyn Error>> {
+    fn read_catalog_reconciled_optional(&self) -> Result<Option<SegmentCatalog>, Box<dyn Error>> {
         if !self.catalog_path().exists() {
             return Ok(None);
         }
-        Ok(Some(self.read_catalog()?))
+        Ok(Some(self.read_catalog_reconciled()?))
     }
 
     fn read_catalog(&self) -> Result<SegmentCatalog, Box<dyn Error>> {
         let content = std::fs::read_to_string(self.catalog_path())?;
         Ok(serde_json::from_str(&content)?)
+    }
+
+    fn read_catalog_reconciled(&self) -> Result<SegmentCatalog, Box<dyn Error>> {
+        let mut catalog = self.read_catalog()?;
+        self.reconcile_catalog_tail(&mut catalog)?;
+        Ok(catalog)
     }
 
     fn write_catalog(&self, catalog: &SegmentCatalog) -> Result<(), Box<dyn Error>> {
@@ -575,6 +581,40 @@ impl AppendOnlyEventLog {
 
     fn next_segment_id(&self, catalog: &SegmentCatalog, seq_start: u64) -> String {
         format!("seg-{seq_start}-{}", catalog.segments.len())
+    }
+
+    fn reconcile_catalog_tail(&self, catalog: &mut SegmentCatalog) -> Result<(), Box<dyn Error>> {
+        let Some(active_segment_id) = catalog.active_segment_id.as_deref() else {
+            return Ok(());
+        };
+        let Some(active_index) = catalog
+            .segments
+            .iter()
+            .position(|segment| segment.segment_id == active_segment_id)
+        else {
+            return Err("INVALID_SEGMENT: catalog active_segment_id does not exist".into());
+        };
+
+        let segment_path = self.segment_path(&catalog.segments[active_index].file_name);
+        let tail = scan_segment_tail(&segment_path)?;
+
+        if tail.event_count == 0 {
+            catalog.next_seq = catalog.segments[active_index].seq_start;
+            return Ok(());
+        }
+
+        let last_event = tail
+            .last_event
+            .ok_or("INVALID_SEGMENT: non-empty segment tail missing last event")?;
+        let entry = &mut catalog.segments[active_index];
+        entry.seq_end = last_event.seq;
+        entry.last_digest = last_event.digest.clone();
+        entry.event_count = tail.event_count;
+        entry.size_bytes = tail.size_bytes;
+        catalog.namespace = Some(last_event.namespace.clone());
+        catalog.next_seq = last_event.seq + 1;
+        catalog.head_digest = last_event.digest;
+        Ok(())
     }
 
     fn roll_segment_if_needed_for_dir(
@@ -644,11 +684,60 @@ fn current_time_ms() -> Result<u64, Box<dyn Error>> {
         .as_millis() as u64)
 }
 
+#[derive(Debug)]
+struct SegmentTail {
+    last_event: Option<Event>,
+    event_count: u64,
+    size_bytes: u64,
+}
+
+fn scan_segment_tail(path: &Path) -> Result<SegmentTail, Box<dyn Error>> {
+    let file = File::open(path)?;
+    let mut last_event = None;
+    let mut event_count = 0u64;
+    let mut size_bytes = 0u64;
+
+    for (line_number, line) in BufReader::new(file).lines().enumerate() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(SEGMENT_PREFIX) {
+            continue;
+        }
+
+        let event = parse_event_line(trimmed, path, line_number + 1)?;
+        event_count += 1;
+        size_bytes += line.len() as u64 + 1;
+        last_event = Some(event);
+    }
+
+    Ok(SegmentTail {
+        last_event,
+        event_count,
+        size_bytes,
+    })
+}
+
+fn parse_event_line(line: &str, path: &Path, line_number: usize) -> Result<Event, Box<dyn Error>> {
+    serde_json::from_str::<Event>(line).map_err(|err| {
+        Box::new(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Failed to parse TRI-SYNC event in {} at line {}: {}",
+                path.display(),
+                line_number,
+                err
+            ),
+        )) as Box<dyn Error>
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde_json::Value;
 
     use crate::event::{Event, ZERO_DIGEST_HEX};
     use crate::state_map::BsmValue;
@@ -789,5 +878,116 @@ mod tests {
         let header = log.load_header().expect("header").expect("active");
         assert_eq!(header.seq_start, 1);
         assert_eq!(header.seq_end, 1);
+    }
+
+    #[test]
+    fn reconciles_stale_catalog_tail_before_next_append() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tri-sync-reconcile-{unique}.jsonl"));
+        let log = AppendOnlyEventLog::open(&path);
+
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:a",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        log.append(&first).expect("append first");
+
+        let second = Event::state_write(
+            1,
+            0,
+            "tenant-a",
+            "tenant-a:b",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("second");
+        log.append(&second).expect("append second");
+
+        let catalog_path = PathBuf::from(format!("{}.catalog.json", path.display()));
+        let mut catalog: Value =
+            serde_json::from_str(&fs::read_to_string(&catalog_path).expect("catalog"))
+                .expect("json");
+        catalog["next_seq"] = Value::from(1u64);
+        catalog["head_digest"] = Value::String(first.digest.clone());
+        catalog["segments"][0]["seq_end"] = Value::from(0u64);
+        catalog["segments"][0]["last_digest"] = Value::String(first.digest.clone());
+        catalog["segments"][0]["event_count"] = Value::from(1u64);
+        catalog["segments"][0]["size_bytes"] = Value::from(0u64);
+        fs::write(
+            &catalog_path,
+            crate::canonical_json::to_canonical_string(&catalog).expect("canonical catalog"),
+        )
+        .expect("write stale catalog");
+
+        let tail = log.tail_metadata().expect("tail metadata");
+        assert_eq!(tail.next_seq, 2);
+        assert_eq!(tail.prev_digest, second.digest);
+
+        let third = Event::state_write(
+            tail.next_seq,
+            0,
+            "tenant-a",
+            "tenant-a:c",
+            BsmValue::Integer(3),
+            false,
+            tail.prev_digest,
+            None,
+        )
+        .expect("third");
+        log.append(&third).expect("append third");
+    }
+
+    #[test]
+    fn load_reports_segment_parse_context() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tri-sync-parse-{unique}.jsonl"));
+        let log = AppendOnlyEventLog::open(&path);
+
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:a",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        log.append(&first).expect("append first");
+
+        let segments_dir = PathBuf::from(format!("{}.segments", path.display()));
+        let mut entries = fs::read_dir(&segments_dir)
+            .expect("segments dir")
+            .map(|entry| entry.expect("dir entry").path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        let segment_path = entries.pop().expect("segment path");
+        let mut contents = fs::read_to_string(&segment_path).expect("segment contents");
+        contents.push_str("{bad json}\n");
+        fs::write(&segment_path, contents).expect("write corrupt segment");
+
+        let err = log.load().expect_err("corrupt segment must fail");
+        let message = err.to_string();
+        assert!(
+            message.contains(&segment_path.display().to_string()),
+            "got: {message}"
+        );
+        assert!(message.contains("line 3"), "got: {message}");
     }
 }

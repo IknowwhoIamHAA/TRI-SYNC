@@ -1,13 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use tri_sync::backend::{EventLogBackend, FileSystemBackend};
 use tri_sync::canonical_json::to_canonical_string;
 use tri_sync::digest::sha256_hex;
-use tri_sync::errors::{ProtocolError, ProtocolErrorReason, ProtocolPhase, ProtocolAction};
+use tri_sync::error::ProtocolViolationError;
 use tri_sync::event::Event;
-use tri_sync::event_log::FileSystemBackend;
 use tri_sync::license;
-use tri_sync::replay::{ReplayEngine, ProtocolViolationError};
+use tri_sync::replay::{ReplayEngine, verify_events};
 use tri_sync::state_map::BsmValue;
 
 #[derive(Parser)]
@@ -93,17 +93,43 @@ enum Commands {
 fn main() {
     let exit_code = match run() {
         Ok(()) => 0,
-        Err(violation) => {
-            let protocol_error = ProtocolError::from_violation(&violation);
-            report_failure(&protocol_error);
+        Err(CliError::Protocol(violation)) => {
+            report_protocol_failure(&violation);
             violation.exit_code()
+        }
+        Err(CliError::License(error)) => {
+            report_license_failure(&error);
+            error.exit_code()
         }
     };
 
     std::process::exit(exit_code);
 }
 
-fn run() -> Result<(), ProtocolViolationError> {
+enum CliError {
+    Protocol(ProtocolViolationError),
+    License(license::LicenseError),
+}
+
+impl From<ProtocolViolationError> for CliError {
+    fn from(value: ProtocolViolationError) -> Self {
+        Self::Protocol(value)
+    }
+}
+
+impl From<license::LicenseError> for CliError {
+    fn from(value: license::LicenseError) -> Self {
+        Self::License(value)
+    }
+}
+
+impl From<String> for CliError {
+    fn from(value: String) -> Self {
+        Self::Protocol(ProtocolViolationError::from_message(value))
+    }
+}
+
+fn run() -> Result<(), CliError> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -116,20 +142,19 @@ fn run() -> Result<(), ProtocolViolationError> {
             production,
         } => {
             if production {
-                license::require_enterprise("Commercial production execution")
-                    .map_err(|err| ProtocolViolationError::InvalidEventFormat {
-                        detail: err.to_string(),
-                        seq: 0,
-                        namespace: namespace.clone(),
-                        tick,
-                    })?;
+                require_enterprise_feature(
+                    "Commercial production execution",
+                    namespace.clone(),
+                    tick,
+                )?;
             }
 
-            let backend = FileSystemBackend::new(log.clone());
+            let backend = FileSystemBackend::open(log.clone());
             backend.lock_for_write()?;
 
-            let seq = backend.next_sequence()?;
-            let prev = backend.prev_digest()?;
+            let tail = backend.tail_metadata()?;
+            let seq = tail.next_seq;
+            let prev = tail.prev_digest;
 
             let event = Event::state_write(
                 seq,
@@ -140,7 +165,8 @@ fn run() -> Result<(), ProtocolViolationError> {
                 false,
                 prev,
                 None,
-            )?;
+            )
+            .map_err(CliError::from)?;
 
             backend.append(&event)?;
             println!("appended STATE_WRITE at seq {}", event.seq);
@@ -154,20 +180,19 @@ fn run() -> Result<(), ProtocolViolationError> {
             production,
         } => {
             if production {
-                license::require_enterprise("Commercial production execution")
-                    .map_err(|err| ProtocolViolationError::InvalidEventFormat {
-                        detail: err.to_string(),
-                        seq: 0,
-                        namespace: namespace.clone(),
-                        tick,
-                    })?;
+                require_enterprise_feature(
+                    "Commercial production execution",
+                    namespace.clone(),
+                    tick,
+                )?;
             }
 
-            let backend = FileSystemBackend::new(log.clone());
+            let backend = FileSystemBackend::open(log.clone());
             backend.lock_for_write()?;
 
-            let seq = backend.next_sequence()?;
-            let prev = backend.prev_digest()?;
+            let tail = backend.tail_metadata()?;
+            let seq = tail.next_seq;
+            let prev = tail.prev_digest;
 
             let event = Event::state_delete(
                 seq,
@@ -177,24 +202,21 @@ fn run() -> Result<(), ProtocolViolationError> {
                 None,
                 true,
                 prev,
-            )?;
+            )
+            .map_err(CliError::from)?;
 
             backend.append(&event)?;
             println!("appended STATE_DELETE at seq {}", event.seq);
         }
 
         Commands::Replay { log } => {
-            let backend = FileSystemBackend::new(log);
-            let engine = ReplayEngine::new(backend);
-            let state = engine.replay()?;
+            let backend = FileSystemBackend::open(log);
+            let events = backend.load()?;
+            let state = ReplayEngine::replay(&events)?;
 
-            let json_value = serde_json::to_value(state.to_json_value())
-                .map_err(|err| ProtocolViolationError::InvalidEventFormat {
-                    detail: err.to_string(),
-                    seq: 0,
-                    namespace: "".into(),
-                    tick: 0,
-                })?;
+            let json_value = serde_json::to_value(state.to_json_value()).map_err(|err| {
+                ProtocolViolationError::invalid_event_format(None, err.to_string())
+            })?;
 
             println!("{}", to_canonical_string(&json_value).unwrap());
         }
@@ -202,23 +224,24 @@ fn run() -> Result<(), ProtocolViolationError> {
         Commands::Verify {
             log,
             seal,
-            tick,
-            namespace,
+            tick: _tick,
+            namespace: _namespace,
             checkpoint_root,
         } => {
-            let backend = FileSystemBackend::new(log.clone());
-            let engine = ReplayEngine::new(backend);
-
-            let outcome = if let Some(root) = checkpoint_root {
-                engine.replay_from_checkpoint(&root)?
-            } else {
-                engine.replay_with_snapshot(&[], None)?
-            };
+            let backend = FileSystemBackend::open(log.clone());
+            let events = backend.load()?;
+            let outcome = verify_events(&events, checkpoint_root.as_deref())?;
 
             println!("OK");
             println!("log={}", log.display());
-            println!("events={}", outcome.state.len());
+            println!("events={}", outcome.total_events);
             println!("root_digest={}", outcome.state.root_digest_hex().unwrap());
+            if let Some(root) = outcome.checkpoint_root {
+                println!("checkpoint_root={root}");
+            }
+            if let Some(count) = outcome.verified_events {
+                println!("verified_events={count}");
+            }
 
             if seal {
                 // seal logic unchanged; uses backend.append()
@@ -227,26 +250,23 @@ fn run() -> Result<(), ProtocolViolationError> {
 
         Commands::Export { log, format } => {
             if format != "json" {
-                return Err(ProtocolViolationError::InvalidEventFormat {
-                    detail: format!("unsupported format '{format}'"),
-                    seq: 0,
-                    namespace: "".into(),
-                    tick: 0,
-                });
+                return Err(CliError::Protocol(
+                    ProtocolViolationError::invalid_event_format(
+                        None,
+                        format!("unsupported format '{format}'"),
+                    ),
+                ));
             }
 
-            let backend = FileSystemBackend::new(log);
+            let backend = FileSystemBackend::open(log);
             let events = backend.load()?;
 
             let arr: Vec<serde_json::Value> = events
                 .iter()
                 .map(serde_json::to_value)
                 .collect::<Result<_, _>>()
-                .map_err(|err| ProtocolViolationError::InvalidEventFormat {
-                    detail: err.to_string(),
-                    seq: 0,
-                    namespace: "".into(),
-                    tick: 0,
+                .map_err(|err| {
+                    ProtocolViolationError::invalid_event_format(None, err.to_string())
                 })?;
 
             let json = serde_json::to_value(arr).unwrap();
@@ -257,12 +277,12 @@ fn run() -> Result<(), ProtocolViolationError> {
             println!("{}", sha256_hex(input.as_bytes()));
         }
 
-        Commands::Example { log } => {
+        Commands::Example { log: _log } => {
             // example logic unchanged, but uses ProtocolViolationError
         }
 
         Commands::Inspect { log } => {
-            let backend = FileSystemBackend::new(log);
+            let backend = FileSystemBackend::open(log);
             let events = backend.load()?;
 
             if events.is_empty() {
@@ -289,7 +309,7 @@ fn run() -> Result<(), ProtocolViolationError> {
         }
 
         Commands::Status { log } => {
-            let backend = FileSystemBackend::new(log.clone());
+            let backend = FileSystemBackend::open(log.clone());
             let events = backend.load()?;
 
             let count = events.len();
@@ -299,8 +319,7 @@ fn run() -> Result<(), ProtocolViolationError> {
                 .map(|e| e.event_type == tri_sync::event::EventType::TickSeal)
                 .unwrap_or(false);
 
-            let engine = ReplayEngine::new(backend);
-            let replay_ok = engine.replay().is_ok();
+            let replay_ok = ReplayEngine::replay(&events).is_ok();
 
             println!("log={}", log.display());
             println!("events={count}");
@@ -310,19 +329,11 @@ fn run() -> Result<(), ProtocolViolationError> {
         }
 
         Commands::Report { log } => {
-            license::require_enterprise("Automated compliance reporting")
-                .map_err(|err| ProtocolViolationError::InvalidEventFormat {
-                    detail: err.to_string(),
-                    seq: 0,
-                    namespace: "".into(),
-                    tick: 0,
-                })?;
+            require_enterprise_feature("Automated compliance reporting", "".into(), 0)?;
 
-            let backend = FileSystemBackend::new(log.clone());
-            let engine = ReplayEngine::new(backend);
-
-            let state = engine.replay()?;
-            let events = engine.backend().load()?;
+            let backend = FileSystemBackend::open(log.clone());
+            let events = backend.load()?;
+            let state = ReplayEngine::replay(&events)?;
 
             let namespaces: std::collections::BTreeSet<&str> =
                 events.iter().map(|e| e.namespace.as_str()).collect();
@@ -356,11 +367,16 @@ fn run() -> Result<(), ProtocolViolationError> {
     Ok(())
 }
 
-fn report_failure(err: &ProtocolError) {
-    let value = err.to_json_value();
-    if let Ok(rendered) = to_canonical_string(&value) {
-        eprintln!("{rendered}");
-    } else {
-        eprintln!("{err}");
-    }
+fn require_enterprise_feature(feature: &str, namespace: String, tick: u64) -> Result<(), CliError> {
+    let _ = (namespace, tick);
+    license::require_enterprise_detailed(feature).map_err(CliError::from)?;
+    Ok(())
+}
+
+fn report_protocol_failure(err: &ProtocolViolationError) {
+    eprintln!("{}", err.to_stderr_json());
+}
+
+fn report_license_failure(err: &license::LicenseError) {
+    eprintln!("{}", err.to_stderr_json());
 }

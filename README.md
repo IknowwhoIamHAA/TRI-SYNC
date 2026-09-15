@@ -1,38 +1,18 @@
 # **TRI‑SYNC**
 ### *The compliance-first deterministic runtime for auditable AI and regulated workflows.*
 
-TRI‑SYNC is a compliance-first Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It supports teams that need cryptographically verified audit trails, deterministic state tracking, and cloud-neutral deployment flexibility.
+TRI‑SYNC is the definitive standalone Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It is self-contained, offline-first, and runs with zero server requirements.
 
 > **v1.3.0 — Protocol frozen. Production-ready.**  
 > The wire format is stable. Any two conforming implementations produce byte-for-byte identical state.
+>
+> **Release status:** This is the authoritative zero-infrastructure production release of TRI-SYNC. Pre-1.0 experimental and serverless iterations are retired and should not be used for new deployments.
 
 ---
 
 ## Quick Start
 
-### 1 — Choose your tier
-
-Core verification, replay, and local single-tenant workflows are free without a license key. Commercial production mode, automated compliance reporting, and enterprise multi-tenant deployments require a commercial license.
-
-**Start a free 7-day trial or purchase a 1-month license key ($29/month):**
-
-```
-https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
-```
-
-For enterprise features, Stripe Checkout delivers your license key by email. Then:
-
-```bash
-export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
-```
-
-### 2 — Download or Build
-
-**Download pre-built binary (Linux x86-64):**
-```bash
-curl -L https://github.com/IknowwhoIamHAA/TRI-SYNC/releases/latest/download/tri-sync-linux-x86_64 \
-     -o tri-sync && chmod +x tri-sync
-```
+### 1 — Build from source
 
 **Build from source (requires Rust 1.85+):**
 ```bash
@@ -42,18 +22,30 @@ cargo build --release
 # Binary: target/release/tri-sync
 ```
 
-### 3 — Verify for free
+### 2 — Use the community core
+
+The open community core includes deterministic logging, digest generation, verification, replay, inspect, and status workflows without any license or network dependency.
 
 ```bash
-./tri-sync digest --input "hello"
+./target/release/tri-sync digest --input "hello"
 # ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 ```
+
+### 3 — Unlock enterprise features offline
+
+Enterprise-only capabilities such as `--production` execution and compliance reporting are unlocked by a signed offline license document supplied through `TRISYNC_LICENSE` or a local license file.
+
+```bash
+export TRISYNC_LICENSE='{"license_version":1,"license_id":"lic_example","holder":"Example Corp","tier":"enterprise","features":["commercial-production","compliance-reporting"],"issued_at":1757913600,"expires_at":null,"signature":"<hex-ed25519-signature>"}'
+```
+
+You can also store the same JSON document at `~/.trisync/license.json`, `./trisync-license.json`, or point `TRISYNC_LICENSE_FILE` to a different path.
 
 ---
 
 ## CLI Reference
 
-`verify`, `replay`, and local single-tenant workflows are free. Use `TRISYNC_LICENSE_KEY` for enterprise production mode and automated compliance reporting.
+`verify`, `replay`, `digest`, `inspect`, `status`, and local single-tenant workflows run in community mode. Enterprise production mode and automated compliance reporting require a valid offline `TRISYNC_LICENSE` document.
 
 ```bash
 # Write a value to the append-only log
@@ -117,25 +109,34 @@ Protocol violations are emitted to `stderr` as JSON with distinct exit codes:
 
 ## Licensing
 
-**Core verification, replay, and single-tenant workflows are free. Commercial production mode, automated compliance reporting, and enterprise multi-tenant deployments require a commercial license.**
+**TRI-SYNC's open-source core is offline-first and always available. Enterprise-only capabilities are unlocked by a signed license document verified locally with an embedded public key.**
 
 | Step | Action |
 |---|---|
-| 1 | Run `tri-sync verify`, `tri-sync replay`, or a local single-tenant workflow for free |
-| 2 | For enterprise features, [start a trial or subscribe](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) → receive license key |
-| 3 | `export TRISYNC_LICENSE_KEY=<your-key>` then use `--production` or `tri-sync report` |
+| 1 | Use `tri-sync verify`, `tri-sync replay`, `tri-sync digest`, and local single-tenant workflows for free |
+| 2 | Obtain a signed TRI-SYNC license document for enterprise capabilities |
+| 3 | Supply the document through `TRISYNC_LICENSE` or a local `license.json` file |
+| 4 | Run `tri-sync --production ...` or `tri-sync report ...` completely offline |
 
-If an enterprise feature is requested without a valid key, `tri-sync` prints a clear error and exits before modifying state.
+If no license is supplied, TRI-SYNC stays in community mode. If an enterprise feature is requested without a valid license, `tri-sync` prints a clear error and exits before modifying state.
 
-**Key store locations** (checked in order):
-1. `$TRISYNC_LICENSE_KEYS_FILE`
-2. `$HOME/.trisync/license_keys`
-3. `/etc/trisync/license_keys`
+**License document lookup order** (checked in order):
+1. `$TRISYNC_LICENSE`
+2. Path in `$TRISYNC_LICENSE_FILE`
+3. `$HOME/.trisync/license.json`
+4. `./trisync-license.json`
 
-For Docker/Kubernetes: inject `TRISYNC_LICENSE_KEY` as a secret environment variable.
+For containers or air-gapped systems, mount the same signed JSON document locally or inject it directly through `TRISYNC_LICENSE`.
 
 **Full licensing details:** [docs/licensing.md](docs/licensing.md)  
-**Commercial terms:** [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md)
+**Commercial terms:** [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md)  
+**Repository license notice:** [LICENSE](LICENSE)
+
+### Historical status
+
+- `v1.0.0` is the frozen public protocol baseline.
+- Pre-1.0 experimental/serverless repository states are retired and preserved only as historical development milestones.
+- The current maintained architecture is the standalone Rust runtime with local append-only storage and offline Ed25519 license verification.
 
 ---
 
@@ -193,8 +194,7 @@ println!("root_digest = {}", state.root_digest_hex()?);
 
 ### Custom storage backends
 
-`tri_sync::backend::EventLogBackend` isolates replay and verification logic from
-storage concerns. TRI-SYNC includes:
+`tri_sync::backend::EventLogBackend` isolates replay and verification logic from storage concerns. TRI-SYNC includes:
 
 - `FileSystemBackend` — wraps the current append-only JSONL file log
 - `InMemoryBackend` — lightweight backend for tests and rapid iteration
@@ -216,11 +216,7 @@ impl EventLogBackend for CustomBackend {
 }
 ```
 
-Checkpoint verification stores verified snapshot caches beside the log so later
-`verify --checkpoint-root <digest>` runs can replay only the tail after the
-trusted `TICK_SEAL`.
-
-Library use requires a commercial license. See [docs/licensing.md](docs/licensing.md).
+Checkpoint verification stores verified snapshot caches beside the log so later `verify --checkpoint-root <digest>` runs can replay only the tail after the trusted `TICK_SEAL`.
 
 ---
 
@@ -230,12 +226,13 @@ Library use requires a commercial license. See [docs/licensing.md](docs/licensin
 |---|---|
 | **Deterministic replay** | Identical ordered logs → identical state, any machine, any time |
 | **SHA-256 digest chain** | Every event is self-hashed and chained; tampering is instantly detectable |
-| **Canonical JSON** | RFC 8785 encoding — no locale drift, no ambiguity, no surprises |
+| **Canonical JSON** | Deterministic canonical JSON with UTF-8 byte-order keys and no locale drift |
 | **Binary state map** | Big-endian, lexicographically ordered; root digest proves complete state |
 | **TICK_SEAL checkpoints** | Root digest snapshots after every logical tick for independent verification |
 | **Multi-tenant isolation** | Namespace-prefixed keys; cross-tenant access is a protocol violation |
 | **File locking** | Concurrent appends are safe via OS-level exclusive locks |
 | **Transactional writes** | `TransactionalStateMap` for atomic multi-key batch mutations |
+| **Offline licensing** | Enterprise capabilities are unlocked locally with Ed25519-signed JSON licenses |
 | **Protocol frozen** | v1.0.0 wire format will not change; future versions are additive only |
 
 ---
@@ -249,9 +246,7 @@ TRI-SYNC is purpose-built for regulated and high-assurance environments:
 - **Insurance** — deterministic claims processing, reproducible underwriting
 - **AI Platforms** — reproducible inference logs, multi-agent coordination
 
-Frontier-scale AI risk tracking is a separate segment for elite labs operating under
-specialized governance frameworks; general enterprise positioning remains centered on
-processing integrity, internal MRM, and portable auditability.
+Frontier-scale AI risk tracking is a separate segment for elite labs operating under specialized governance frameworks; general enterprise positioning remains centered on processing integrity, internal MRM, and portable auditability.
 
 **Learn more:** [docs/product.md](docs/product.md)
 
@@ -264,75 +259,12 @@ processing integrity, internal MRM, and portable auditability.
 | [SPEC.md](SPEC.md) | Full normative protocol specification |
 | [docs/product.md](docs/product.md) | Product overview, use cases, guarantees |
 | [docs/differentiation.md](docs/differentiation.md) | TRI-SYNC vs CloudTrail, Object Lock, and vendor-native integrity features |
-| [docs/licensing.md](docs/licensing.md) | Licensing flow, tiers, FAQ |
+| [docs/licensing.md](docs/licensing.md) | Offline license format, activation flow, FAQ |
 | [docs/cross-language-determinism.md](docs/cross-language-determinism.md) | Wire format, test vectors, conformance checklist |
 | [invariants.md](invariants.md) | All protocol invariants |
 | [architecture.md](architecture.md) | Runtime layer architecture |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) | Commercial license terms |
-
----
-
-## Cloudflare Worker (License Issuance)
-
-The `cloudflare/worker/` directory contains a zero-dependency Cloudflare Worker that
-handles the full Stripe → KV → Resend email pipeline for license issuance.
-
-### Routes
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/webhook` | Stripe webhook receiver (HMAC-SHA256 verified) |
-| `POST` | `/validate` | License key validation — returns status JSON (active, expired, revoked, not_found) |
-| `POST` | `/trial` | Issue 7-day trial license key — stores metadata in KV and sends email |
-
-### Setup
-
-```bash
-cd cloudflare/worker
-npm install
-
-# Create KV namespaces
-wrangler kv namespace create LICENSE_KV --env staging
-wrangler kv namespace create LICENSE_KV --env production
-
-# Paste the returned namespace IDs into wrangler.toml
-
-# Set secrets (repeat for each --env)
-wrangler secret put STRIPE_WEBHOOK_SECRET --env production
-wrangler secret put RESEND_API_KEY         --env production
-wrangler secret put RESEND_FROM_EMAIL      --env production
-
-# Deploy
-wrangler deploy --env staging
-wrangler deploy --env production
-```
-
-`STRIPE_WEBHOOK_SECRET` is the raw `whsec_...` value from the Stripe dashboard — **not** Base64-encoded.
-
-For Workers Builds, keep custom-domain route mappings in the Cloudflare dashboard
-(instead of `wrangler.toml`) for `api.trisync.dev/*`, `trisync.dev/marketing/*`,
-`trisync.dev/health`, `trisync.dev/validate`, `trisync.dev/trial`, and `trisync.dev/webhook`.
-
-### End-to-End Flow
-
-```
-Customer pays on Stripe
-  └─ Stripe sends POST /webhook
-       └─ Worker verifies HMAC-SHA256 signature
-            └─ checkout.session.completed
-                 ├─ Idempotency check (LICENSE_KV.get("license:<sessionId>"))
-                 ├─ Generate key: TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
-                 ├─ KV.put("license:<sessionId>", { licenseKey, email, ... })
-                 ├─ KV.put("bykey:<licenseKey>", sessionId)   ← reverse index
-                 └─ Resend email with license key
-
-Customer activates:
-  export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
-  tri-sync verify --log events.jsonl
-  # OK
-  # root_digest=768e154f...
-```
 
 ---
 
@@ -346,12 +278,10 @@ Customer activates:
 - ✅ No TODOs or FIXMEs in protocol-critical code
 - ✅ Cross-language determinism test vector pinned: `768e154f…`
 - ✅ `verify` subcommand — replay-based audit tool, exits 1 on any protocol violation
-- ✅ Cloudflare Worker — Stripe → KV → Resend, no SDK, HMAC-SHA256 verified
+- ✅ Zero-overhead offline licensing — no cloud or serverless control plane required
 
 ---
 
 ## License
 
-TRI-SYNC is commercially licensed. See [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for full terms.
-
-For licensing inquiries: https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
+TRI-SYNC provides an open-source core engine with optional commercial licensing for enterprise-only capabilities. See [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for terms and [docs/licensing.md](docs/licensing.md) for offline activation details.

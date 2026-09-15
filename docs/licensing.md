@@ -1,143 +1,106 @@
 # TRI-SYNC Licensing
 
-TRI-SYNC is a compliance-first deterministic runtime. Core verification, replay, and local single-tenant workflows are free without a license key. Enterprise features require a valid license key.
+TRI-SYNC ships as an open-source core deterministic runtime with optional enterprise-only capabilities unlocked by an offline signed license document. No hosted service, webhook, or online activation step is required.
 
 ---
 
 ## How Licensing Works
 
-TRI-SYNC uses a **key-based activation model**:
+1. **Community mode is the default** — verification, replay, digesting, inspection, status, and local single-tenant workflows run without a license.
+2. **Enterprise mode is offline** — restricted capabilities such as commercial production execution and automated compliance reporting unlock only when TRI-SYNC verifies a signed local license document.
+3. **Verification is local** — `src/license.rs` verifies the license signature with an embedded Ed25519 public key.
 
-1. **Use core features freely** — `verify`, `replay`, and local single-tenant execution do not require a key.
-2. **Purchase or trial enterprise features** — commercial production mode and automated compliance reporting require a license.
-3. **Receive key** — you receive a license key string (e.g., `TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX`).
-4. **Set environment variable** — export your key before using enterprise features.
-
-If an enterprise feature is requested without a valid key, `tri-sync` prints a clear error and exits before changing protocol state.
+If no license is present, TRI-SYNC continues in community mode. If an enterprise feature is requested without a valid license, the CLI prints a structured error and exits before modifying state.
 
 ---
 
 ## Activation Steps
 
-### Step 1 — Obtain a License Key
+### Step 1 — Obtain a signed license document
 
-**Get a free 7-Day Trial key:**
+Enterprise customers receive a signed JSON license document containing:
 
-Start a 7-day evaluation through Stripe Checkout:
-```
-https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05
-```
-
-After completing checkout, you will receive a license key by email.
+- `license_version`
+- `license_id`
+- `holder`
+- `tier`
+- `features`
+- `issued_at`
+- optional `expires_at`
+- `signature`
 
 ### Step 2 — Install TRI-SYNC
 
-**Download pre-built binary (Linux x86-64):**
-```bash
-curl -L https://github.com/IknowwhoIamHAA/TRI-SYNC/releases/latest/download/tri-sync-linux-x86_64 \
-     -o tri-sync && chmod +x tri-sync
-```
-
-**Build from source:**
 ```bash
 git clone https://github.com/IknowwhoIamHAA/TRI-SYNC
 cd TRI-SYNC
 cargo build --release
-# Binary is at: target/release/tri-sync
 ```
 
-### Step 3 — Set Your Enterprise License Key
+### Step 3 — Supply the license locally
+
+Use either the environment variable:
 
 ```bash
-export TRISYNC_LICENSE_KEY=TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
+export TRISYNC_LICENSE='{"license_version":1,"license_id":"lic_example","holder":"Example Corp","tier":"enterprise","features":["commercial-production","compliance-reporting"],"issued_at":1757913600,"expires_at":null,"signature":"<hex-ed25519-signature>"}'
 ```
 
-For persistent activation, add the export to your shell profile (`~/.bashrc`, `~/.zshrc`) or your service's environment configuration.
+Or a local file:
 
-### Step 4 — Verify Activation
+- `$TRISYNC_LICENSE_FILE`
+- `$HOME/.trisync/license.json`
+- `./trisync-license.json`
+
+### Step 4 — Run enterprise-only commands offline
 
 ```bash
-tri-sync digest --input "hello"
+tri-sync apply --log events.jsonl --namespace tenant-a --key job-status --value ready --production
+tri-sync report --log events.jsonl
 ```
-
-If your key is valid, you will see a SHA-256 digest. If the key is invalid, you will see a clear error message describing the problem and how to resolve it.
 
 ---
 
-## License Key Store
+## Lookup Order
 
-TRI-SYNC resolves the valid-keys file in this order:
+TRI-SYNC checks license sources in this order:
 
-| Priority | Path |
+| Priority | Source |
 |---|---|
-| 1 | `$TRISYNC_LICENSE_KEYS_FILE` (if set) |
-| 2 | `$HOME/.trisync/license_keys` |
-| 3 | `/etc/trisync/license_keys` (Linux/macOS system-wide) |
+| 1 | `$TRISYNC_LICENSE` |
+| 2 | File path in `$TRISYNC_LICENSE_FILE` |
+| 3 | `$HOME/.trisync/license.json` |
+| 4 | `./trisync-license.json` |
 
-The key-store file is a plain text file with one key per line. Lines beginning with `#` are comments and are ignored.
-
-**Example `~/.trisync/license_keys`:**
-```
-# TRI-SYNC license keys — do not share this file
-TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX
-```
-
-For multi-node or containerized deployments, the recommended approach is to inject `TRISYNC_LICENSE_KEY` as a secret environment variable via your secret manager (Kubernetes Secrets, AWS Secrets Manager, HashiCorp Vault, etc.).
+The first present document is parsed as JSON and verified locally against TRI-SYNC's embedded Ed25519 public key.
 
 ---
-
-## License Tiers
-
-| Tier | Use Case |
-|---|---|
-| **7-Day Trial** | Free 7-day evaluation key with full feature access |
-| **Developer** | Single developer, non-production use, evaluation |
-| **Team** | Up to 10 developers, internal tooling, staging environments |
-| **Enterprise** | Unlimited developers, production deployments, SLA support |
-| **OEM** | Redistribution rights, embedded use in third-party products |
 
 ## Feature Access
 
-| Feature | Free core | Enterprise license |
+| Feature | Community mode | Enterprise license |
 |---|---|---|
-| SHA-256 digest, `verify`, and `replay` | Yes | Yes |
+| SHA-256 digest, `verify`, `replay`, `inspect`, `status` | Yes | Yes |
 | Local single-tenant execution | Yes | Yes |
 | Commercial production execution (`apply` or `delete` with `--production`) | No | Yes |
 | Automated compliance report (`tri-sync report`) | No | Yes |
-| Enterprise multi-tenant deployments | No | Yes |
 
-TRI-SYNC's immutable provenance, SHA-256 digest chain, and independent verification support audit workflows and California AI governance expectations. They do not by themselves certify compliance with any law or regulation.
-
-Contact [the TRI-SYNC team](https://buy.stripe.com/eVq3cxalw3RbgRL4FCfEk05) to discuss pricing and terms for your use case.
-
----
-
-## Commercial License Summary
-
-TRI-SYNC is provided under a **Commercial License**. Key terms:
-
-- Production use requires a paid commercial license.
-- The source code is available for evaluation and review.
-- You may not redistribute TRI-SYNC or build products based on TRI-SYNC without an OEM license.
-- The protocol specification (SPEC.md) is provided for interoperability purposes.
-
-Full terms are in [COMMERCIAL_LICENSE.md](../COMMERCIAL_LICENSE.md).
+TRI-SYNC's immutable provenance, SHA-256 digest chain, and independent verification support audit workflows. They do not by themselves certify compliance with any law or regulation.
 
 ---
 
 ## FAQ
 
-**Q: Can I evaluate TRI-SYNC without a license key?**  
-A: Start a free 7-day trial through Stripe Checkout, then receive the license key by email.
+**Q: Do I need internet access to activate TRI-SYNC?**  
+A: No. Activation is fully offline and uses a signed JSON license document verified locally.
 
-**Q: Does the license key expire?**  
-A: 7-day trial keys expire automatically after 7 days from issuance. Other license keys may have expiry dates depending on your tier. Annual licenses are renewed each year; perpetual licenses do not expire.
+**Q: What happens if I do not provide a license?**  
+A: TRI-SYNC stays in community mode and continues to support its open-core verification and replay workflows.
 
-**Q: Is TRI-SYNC open source?**  
-A: The source code is available for review and evaluation. Production use requires a commercial license. The wire protocol is open (SPEC.md is public) to allow interoperability with other conforming implementations.
+**Q: What happens if the license is invalid or expired?**  
+A: Community-mode features still work. Enterprise-only commands fail fast with a structured license error.
 
-**Q: Can I run TRI-SYNC in a Docker container?**  
-A: Yes. Pass the license key as an environment variable: `docker run -e TRISYNC_LICENSE_KEY=... your-image`.
+**Q: Can I use a file instead of an environment variable?**  
+A: Yes. Put the signed JSON document at `~/.trisync/license.json`, `./trisync-license.json`, or point `TRISYNC_LICENSE_FILE` at any local path.
 
-**Q: What happens if my license expires during a running process?**  
-A: The license is checked only at startup. A running process is not interrupted by key expiry. The key is re-checked on the next invocation.
+**Q: Can I run TRI-SYNC in a container or air-gapped environment?**  
+A: Yes. Mount the signed JSON file locally or inject the same document through `TRISYNC_LICENSE`.

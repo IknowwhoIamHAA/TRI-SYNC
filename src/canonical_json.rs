@@ -31,6 +31,8 @@ fn write_value(value: &Value, out: &mut String) -> Result<(), String> {
 
 fn write_object(map: &Map<String, Value>, out: &mut String) -> Result<(), String> {
     let mut entries: Vec<(&str, &Value)> = map.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    // TRI-SYNC sorts object keys by raw UTF-8 byte order, matching the protocol
+    // invariant used by BSM encoding and digest generation.
     entries.sort_by(|(a, _), (b, _)| a.as_bytes().cmp(b.as_bytes()));
 
     out.push('{');
@@ -161,6 +163,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn sorts_non_ascii_keys_by_utf8_byte_order() {
+        let value = json!({
+            "\u{00e1}": 1,
+            "a\u{0301}": 2,
+            "z": 3
+        });
+
+        assert_eq!(
+            to_canonical_string(&value).expect("sorted"),
+            r#"{"á":2,"z":3,"á":1}"#
+        );
+    }
+
     // ---------------------------------------------------------------------------
     // Fix 12: RFC 8785 / JCS conformance test vectors
     // ---------------------------------------------------------------------------
@@ -212,8 +228,8 @@ mod tests {
 
     #[test]
     fn rfc8785_nested_object_keys_sorted_lexicographically() {
-        // RFC 8785 §3.2.3: keys sorted by their UTF-16 code unit sequence.
-        // For ASCII-only keys, byte order equals UTF-16 code unit order.
+        // TRI-SYNC uses UTF-8 byte ordering; for ASCII-only keys this is identical
+        // to RFC 8785/JCS ordering.
         let value = json!({"b": 2, "a": 1, "c": 3});
         assert_eq!(
             to_canonical_string(&value).expect("sorted"),

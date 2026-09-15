@@ -1,42 +1,80 @@
-//! TRI-SYNC license validation.
+//! TRI-SYNC offline license validation.
 //!
-//! Core local verification and single-tenant workflows are available without a
-//! license. Enterprise features validate a commercial key from
-//! `TRISYNC_LICENSE_KEY`.
-//!
-//! # Valid-key store
-//!
-//! Accepted keys are loaded from a newline-delimited text file.  The file
-//! path is resolved in this order:
-//!
-//! 1. The `TRISYNC_LICENSE_KEYS_FILE` environment variable, if set and
-//!    non-empty.
-//! 2. `$HOME/.trisync/license_keys` (Unix) / `%USERPROFILE%\.trisync\license_keys` (Windows).
-//! 3. `/etc/trisync/license_keys` (Linux/macOS only, for system-wide installs).
-//!
-//! Each non-empty, non-comment line (lines starting with `#` are ignored) in
-//! the file is treated as one valid key.
-//!
-//! # Error behavior
-//!
-//! If no valid license key is found the binary prints a clear, actionable,
-//! machine-parseable error to stderr and exits before modifying protocol state.
+//! Core local verification and community workflows are available without a
+//! license. Enterprise features validate a signed license document from
+//! `TRISYNC_LICENSE` or a local license file.
 
 use std::env;
 use std::fmt::{self, Display, Formatter};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::canonical_json::to_canonical_string;
+use crate::hex::decode_hex;
 
-/// The environment variable that must contain the license key.
-pub const LICENSE_KEY_ENV: &str = "TRISYNC_LICENSE_KEY";
+/// The environment variable that may contain a signed license document.
+pub const LICENSE_ENV: &str = "TRISYNC_LICENSE";
 
-/// The environment variable that overrides the path to the valid-keys file.
-pub const LICENSE_KEYS_FILE_ENV: &str = "TRISYNC_LICENSE_KEYS_FILE";
+/// The environment variable that overrides the path to the local license file.
+pub const LICENSE_FILE_ENV: &str = "TRISYNC_LICENSE_FILE";
+
+/// Embedded Ed25519 public key used to verify signed TRI-SYNC licenses.
+pub const PUBLIC_KEY: &str = "acaa9e80d4fd6ffcce6a633f45e28fc91e0d9b851e44e6c72ca47b713c1ba408";
+
+const DEFAULT_LICENSE_FILE_NAME: &str = "license.json";
+const PROJECT_LICENSE_FILE_NAME: &str = "trisync-license.json";
+const LICENSE_SCHEMA_VERSION: u32 = 1;
+const MAX_LICENSE_BYTES: usize = 64 * 1024;
+static VERIFYING_KEY: LazyLock<Result<VerifyingKey, String>> = LazyLock::new(|| {
+    let public_key_bytes = decode_hex(PUBLIC_KEY).map_err(|err| err.to_string())?;
+    let public_key_bytes: [u8; 32] = public_key_bytes
+        .try_into()
+        .map_err(|_| "Embedded TRI-SYNC public key must be exactly 32 bytes.".to_string())?;
+    VerifyingKey::from_bytes(&public_key_bytes).map_err(|err| err.to_string())
+});
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LicenseMode {
+    Community,
+    Licensed(LicenseDocument),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LicenseDocument {
+    pub license_version: u32,
+    pub license_id: String,
+    pub holder: String,
+    pub tier: String,
+    #[serde(default)]
+    pub features: Vec<String>,
+    pub issued_at: u64,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct LicensePayload<'a> {
+    license_version: u32,
+    license_id: &'a str,
+    holder: &'a str,
+    tier: &'a str,
+    features: &'a [String],
+    issued_at: u64,
+    expires_at: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct LoadedLicense {
+    contents: String,
+    source: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "error_type")]
@@ -57,6 +95,20 @@ pub enum LicenseError {
         feature: Option<String>,
         detail: String,
     },
+}
+
+impl LicenseDocument {
+    fn payload(&self) -> LicensePayload<'_> {
+        LicensePayload {
+            license_version: self.license_version,
+            license_id: &self.license_id,
+            holder: &self.holder,
+            tier: &self.tier,
+            features: &self.features,
+            issued_at: self.issued_at,
+            expires_at: self.expires_at,
+        }
+    }
 }
 
 impl LicenseError {
@@ -106,189 +158,326 @@ impl Display for LicenseError {
     }
 }
 
-/// Require a valid commercial key for an enterprise feature.
+/// Return the current runtime mode, preserving validation failures.
+pub fn current_mode() -> Result<LicenseMode, LicenseError> {
+    match load_license_source(None)? {
+        Some(loaded) => verify_loaded_license(&loaded, None).map(LicenseMode::Licensed),
+        None => Ok(LicenseMode::Community),
+    }
+}
+
+/// Return the current runtime mode, falling back to community mode on invalid input.
+pub fn current_mode_or_community() -> LicenseMode {
+    current_mode().unwrap_or(LicenseMode::Community)
+}
+
+/// Require a valid commercial license for an enterprise feature.
 pub fn require_enterprise(feature: &str) -> Result<(), String> {
     require_enterprise_detailed(feature).map_err(|err| err.to_string())
 }
 
-/// Require a valid commercial key for an enterprise feature with a structured error.
+/// Require a valid commercial license for an enterprise feature with a structured error.
 pub fn require_enterprise_detailed(feature: &str) -> Result<(), LicenseError> {
-    check_detailed(Some(feature.to_string())).map_err(|err| match err {
-        LicenseError::EmptyLicenseKey { detail, .. } => LicenseError::EmptyLicenseKey {
-            feature: Some(feature.to_string()),
-            detail: enterprise_feature_detail(feature, &detail),
-        },
-        LicenseError::LicenseStoreMissing { detail, .. } => LicenseError::LicenseStoreMissing {
-            feature: Some(feature.to_string()),
-            detail: enterprise_feature_detail(feature, &detail),
-        },
-        LicenseError::InvalidLicenseKey { detail, .. } => LicenseError::InvalidLicenseKey {
-            feature: Some(feature.to_string()),
-            detail: enterprise_feature_detail(feature, &detail),
-        },
-        LicenseError::LicenseRequired { detail, .. } => LicenseError::LicenseRequired {
-            feature: feature.to_string(),
-            detail: enterprise_feature_detail(feature, &detail),
-        },
-    })
+    let feature_name = feature.to_string();
+    let loaded = load_license_source(Some(feature_name.clone()))?;
+
+    let Some(loaded) = loaded else {
+        return Err(LicenseError::LicenseRequired {
+            feature: feature_name.clone(),
+            detail: enterprise_feature_detail(
+                feature,
+                &format!(
+                    "No signed TRI-SYNC license was provided. Supply one with ${LICENSE_ENV} or by placing a JSON license at ~/.trisync/{DEFAULT_LICENSE_FILE_NAME} or ./{PROJECT_LICENSE_FILE_NAME}."
+                ),
+            ),
+        });
+    };
+
+    verify_loaded_license(&loaded, Some(feature_name.clone())).map(|_| ())
 }
 
-/// Check whether a valid license key is present.
+/// Validate the configured license if one is present.
 ///
-/// Returns `Ok(())` when a valid key is found.  Returns `Err(String)` with a
-/// human-readable message describing what is wrong and how to fix it.
-///
-/// Call this once at binary startup before executing any command.
+/// Missing license material is treated as community mode and returns `Ok(())`.
 pub fn check() -> Result<(), String> {
     check_detailed(None).map_err(|err| err.to_string())
 }
 
 pub fn check_detailed(feature: Option<String>) -> Result<(), LicenseError> {
-    let key = read_key(feature.clone())?;
-    let valid_keys = load_valid_keys(feature.clone())?;
+    let Some(loaded) = load_license_source(feature.clone())? else {
+        return Ok(());
+    };
 
-    if valid_keys.is_empty() {
-        return Err(LicenseError::LicenseStoreMissing {
-            feature,
-            detail: format!(
-                "No license key store found.\n\
-                 Please ensure a valid-keys file exists at one of the default paths\n\
-                 or set {LICENSE_KEYS_FILE_ENV} to the correct path.\n\
-                 \n\
-                 To obtain a license key, visit: https://github.com/IknowwhoIamHAA/TRI-SYNC"
-            ),
-        });
-    }
-
-    // Iterate all keys without short-circuiting to reduce timing variance.
-    let found = valid_keys.iter().fold(false, |acc, k| acc | (k == &key));
-    if found {
-        Ok(())
-    } else {
-        Err(LicenseError::InvalidLicenseKey {
-            feature,
-            detail: format!(
-                "Invalid or expired license key.\n\
-                 \n\
-                 The key set in ${LICENSE_KEY_ENV} was not found in the license key store.\n\
-                 \n\
-                 • To obtain or renew a license key, visit:\n  \
-                 https://github.com/IknowwhoIamHAA/TRI-SYNC\n\
-                 • Once you have a key, run:\n  \
-                 export {LICENSE_KEY_ENV}=<your-key>\n  \
-                 tri-sync <command>"
-            ),
-        })
-    }
+    verify_loaded_license(&loaded, feature).map(|_| ())
 }
 
-/// Read the license key from the environment.
-fn read_key(feature: Option<String>) -> Result<String, LicenseError> {
-    match env::var(LICENSE_KEY_ENV) {
-        Ok(key) if !key.trim().is_empty() => Ok(key.trim().to_string()),
-        Ok(_) => Err(LicenseError::EmptyLicenseKey {
-            feature,
-            detail: format!(
-                "The ${LICENSE_KEY_ENV} environment variable is set but empty.\n\
-                 Set it to your TRI-SYNC license key before running:\n  \
-                 export {LICENSE_KEY_ENV}=<your-key>"
-            ),
-        }),
-        Err(_) => Err(LicenseError::LicenseRequired {
-            feature: feature.unwrap_or_else(|| "commercial feature".to_string()),
-            detail: format!(
-                "TRI-SYNC requires a commercial license key.\n\
-                 \n\
-                 Set the ${LICENSE_KEY_ENV} environment variable to your license key:\n  \
-                 export {LICENSE_KEY_ENV}=<your-key>\n  \
-                 tri-sync <command>\n\
-                 \n\
-                 To obtain a license key, visit:\n  \
-                 https://github.com/IknowwhoIamHAA/TRI-SYNC"
-            ),
-        }),
+fn load_license_source(feature: Option<String>) -> Result<Option<LoadedLicense>, LicenseError> {
+    match env::var(LICENSE_ENV) {
+        Ok(value) if !value.trim().is_empty() => {
+            validate_license_size(value.len(), &format!("${LICENSE_ENV}"), feature.clone())?;
+            return Ok(Some(LoadedLicense {
+                contents: value,
+                source: format!("${LICENSE_ENV}"),
+            }));
+        }
+        Ok(_) => {
+            return Err(LicenseError::EmptyLicenseKey {
+                feature,
+                detail: format!(
+                    "The ${LICENSE_ENV} environment variable is set but empty. Set it to a signed TRI-SYNC license document or unset it to continue in community mode."
+                ),
+            });
+        }
+        Err(_) => {}
     }
-}
 
-/// Load valid keys from the key-store file.
-///
-/// Returns an empty set if no key-store file is found (the caller is
-/// responsible for treating an empty store as an error).
-fn load_valid_keys(
-    feature: Option<String>,
-) -> Result<std::collections::HashSet<String>, LicenseError> {
-    let path = resolve_keys_file_path();
-
-    let Some(path) = path else {
-        return Ok(std::collections::HashSet::new());
+    let Some(path) = resolve_license_file_path() else {
+        return Ok(None);
     };
 
     let content = fs::read_to_string(&path).map_err(|err| LicenseError::LicenseStoreMissing {
-        feature,
+        feature: feature.clone(),
         detail: format!(
-            "Failed to read license key store at {}: {err}\n\
-                 Check file permissions or set {LICENSE_KEYS_FILE_ENV} to the correct path.",
+            "Failed to read TRI-SYNC license file at {}: {err}\nCheck file permissions or set {LICENSE_FILE_ENV} to the correct path.",
             path.display()
         ),
     })?;
 
-    Ok(parse_key_file_content(&content))
+    if content.trim().is_empty() {
+        return Err(LicenseError::EmptyLicenseKey {
+            feature,
+            detail: format!(
+                "The TRI-SYNC license file at {} is empty. Provide a signed license document or remove the file to continue in community mode.",
+                path.display()
+            ),
+        });
+    }
+
+    validate_license_size(content.len(), &path.display().to_string(), feature.clone())?;
+
+    Ok(Some(LoadedLicense {
+        contents: content,
+        source: path.display().to_string(),
+    }))
+}
+
+fn verify_loaded_license(
+    loaded: &LoadedLicense,
+    feature: Option<String>,
+) -> Result<LicenseDocument, LicenseError> {
+    let document = parse_license_document(&loaded.contents, &loaded.source, feature.clone())?;
+    verify_license_document(&document, &loaded.source, feature)?;
+    Ok(document)
+}
+
+fn parse_license_document(
+    raw: &str,
+    source: &str,
+    feature: Option<String>,
+) -> Result<LicenseDocument, LicenseError> {
+    let parsed = serde_json::from_str::<LicenseDocument>(raw).map_err(|err| {
+        LicenseError::InvalidLicenseKey {
+            feature: feature.clone(),
+            detail: format!(
+                "Failed to parse TRI-SYNC license from {source}: {err}. The license must be a JSON document signed for offline verification."
+            ),
+        }
+    })?;
+
+    if parsed.license_version != LICENSE_SCHEMA_VERSION {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!(
+                "Unsupported TRI-SYNC license schema version {} in {source}. Expected version {LICENSE_SCHEMA_VERSION}.",
+                parsed.license_version
+            ),
+        });
+    }
+
+    if parsed.license_id.trim().is_empty()
+        || parsed.holder.trim().is_empty()
+        || parsed.tier.trim().is_empty()
+    {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!(
+                "The TRI-SYNC license from {source} is missing required fields (`license_id`, `holder`, or `tier`)."
+            ),
+        });
+    }
+
+    if parsed.issued_at > unix_timestamp_now() {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!(
+                "The TRI-SYNC license from {source} has issued_at {} in the future.",
+                parsed.issued_at
+            ),
+        });
+    }
+
+    if parsed
+        .features
+        .iter()
+        .any(|feature_name| feature_name.trim().is_empty())
+    {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!("The TRI-SYNC license from {source} contains an empty feature name."),
+        });
+    }
+
+    if let Some(expires_at) = parsed.expires_at
+        && expires_at < parsed.issued_at
+    {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!("The TRI-SYNC license from {source} expires before it is issued."),
+        });
+    }
+
+    Ok(parsed)
+}
+
+fn verify_license_document(
+    document: &LicenseDocument,
+    source: &str,
+    feature: Option<String>,
+) -> Result<(), LicenseError> {
+    let payload = serde_json::to_value(document.payload()).map_err(|err| {
+        LicenseError::InvalidLicenseKey {
+            feature: feature.clone(),
+            detail: format!("Failed to encode TRI-SYNC license payload from {source}: {err}"),
+        }
+    })?;
+    let canonical_payload =
+        to_canonical_string(&payload).map_err(|err| LicenseError::InvalidLicenseKey {
+            feature: feature.clone(),
+            detail: format!("Failed to canonicalize TRI-SYNC license payload from {source}: {err}"),
+        })?;
+
+    let verifying_key = VERIFYING_KEY
+        .as_ref()
+        .map_err(|err| LicenseError::InvalidLicenseKey {
+            feature: feature.clone(),
+            detail: format!("Embedded TRI-SYNC public key is invalid: {err}"),
+        })?;
+
+    let signature_bytes =
+        decode_hex(document.signature.trim()).map_err(|err| LicenseError::InvalidLicenseKey {
+            feature: feature.clone(),
+            detail: format!("TRI-SYNC license signature in {source} is not valid hex: {err}"),
+        })?;
+    let signature = Signature::try_from(signature_bytes.as_slice()).map_err(|err| {
+        LicenseError::InvalidLicenseKey {
+            feature: feature.clone(),
+            detail: format!("TRI-SYNC license signature in {source} is malformed: {err}"),
+        }
+    })?;
+
+    verifying_key
+        .verify(canonical_payload.as_bytes(), &signature)
+        .map_err(|_| LicenseError::InvalidLicenseKey {
+            feature: feature.clone(),
+            detail: format!(
+                "TRI-SYNC license signature verification failed for {source}. Provide a valid offline license document signed by TRI-SYNC."
+            ),
+        })?;
+
+    if let Some(expires_at) = document.expires_at {
+        if expires_at < unix_timestamp_now() {
+            return Err(LicenseError::InvalidLicenseKey {
+                feature,
+                detail: format!(
+                    "The TRI-SYNC license in {source} expired at unix timestamp {expires_at}. Provide a renewed signed license document."
+                ),
+            });
+        }
+    }
+
+    if let Some(requested_feature) = feature.as_deref() {
+        let Some(required_capability) = required_license_feature(requested_feature) else {
+            return Ok(());
+        };
+
+        if !document
+            .features
+            .iter()
+            .any(|granted| granted == required_capability)
+        {
+            return Err(LicenseError::InvalidLicenseKey {
+                feature: feature.clone(),
+                detail: format!(
+                    "The TRI-SYNC license in {source} does not grant the required capability `{required_capability}` for {requested_feature}."
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn enterprise_feature_detail(feature: &str, detail: &str) -> String {
     format!(
-        "{feature} is an enterprise feature and requires a valid {LICENSE_KEY_ENV}.\n\n{detail}"
+        "{feature} is an enterprise feature and requires a valid offline TRI-SYNC license.\n\n{detail}"
     )
 }
 
-/// Parse a key-file content string and return the set of valid keys.
-///
-/// Empty lines and lines starting with `#` are ignored.
-pub(crate) fn parse_key_file_content(content: &str) -> std::collections::HashSet<String> {
-    content
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(String::from)
-        .collect()
+fn unix_timestamp_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
-/// Return the first existing candidate path for the valid-keys file, or `None`
-/// if no candidate path exists on disk.
-///
-/// **Note on the env-var override (priority 1):** when `TRISYNC_LICENSE_KEYS_FILE`
-/// is set, the path is returned as-is without checking whether the file exists on
-/// disk.  If the file is missing, `load_valid_keys` will return an `Err` describing
-/// the I/O failure.  Priorities 2 and 3 only return a path when the file already
-/// exists on disk.
-fn resolve_keys_file_path() -> Option<PathBuf> {
-    // 1. Explicit override via environment variable.
-    if let Ok(path) = env::var(LICENSE_KEYS_FILE_ENV) {
+fn validate_license_size(
+    byte_len: usize,
+    source: &str,
+    feature: Option<String>,
+) -> Result<(), LicenseError> {
+    if byte_len > MAX_LICENSE_BYTES {
+        return Err(LicenseError::InvalidLicenseKey {
+            feature,
+            detail: format!(
+                "TRI-SYNC license input from {source} is too large ({byte_len} bytes); the maximum supported size is {MAX_LICENSE_BYTES} bytes."
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn required_license_feature(feature: &str) -> Option<&'static str> {
+    match feature {
+        "Commercial production execution" => Some("commercial-production"),
+        "Automated compliance reporting" => Some("compliance-reporting"),
+        _ => None,
+    }
+}
+
+fn resolve_license_file_path() -> Option<PathBuf> {
+    if let Ok(path) = env::var(LICENSE_FILE_ENV) {
         let path = PathBuf::from(path.trim());
         if !path.as_os_str().is_empty() {
             return Some(path);
         }
     }
 
-    // 2. User home directory.
     let home_dir = env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
         .map(PathBuf::from)
         .ok();
 
     if let Some(home) = home_dir {
-        let candidate = home.join(".trisync").join("license_keys");
+        let candidate = home.join(".trisync").join(DEFAULT_LICENSE_FILE_NAME);
         if candidate.exists() {
             return Some(candidate);
         }
     }
 
-    // 3. System-wide path (Linux/macOS).
-    #[cfg(not(target_os = "windows"))]
-    {
-        let system = PathBuf::from("/etc/trisync/license_keys");
-        if system.exists() {
-            return Some(system);
+    if let Ok(current_dir) = env::current_dir() {
+        let candidate = current_dir.join(PROJECT_LICENSE_FILE_NAME);
+        if candidate.exists() {
+            return Some(candidate);
         }
     }
 
@@ -300,24 +489,29 @@ mod tests {
     use std::io::Write;
     use std::sync::Mutex;
 
+    use ed25519_dalek::{Signer, SigningKey};
+
     use super::{
-        LICENSE_KEY_ENV, LICENSE_KEYS_FILE_ENV, LicenseError, check, parse_key_file_content,
+        LICENSE_ENV, LICENSE_FILE_ENV, LICENSE_SCHEMA_VERSION, LicenseDocument, LicenseError,
+        LicenseMode, check, check_detailed, current_mode, current_mode_or_community,
         require_enterprise, require_enterprise_detailed,
     };
 
-    // Serialize all env-mutating tests so they don't interfere with each other.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const TEST_PRIVATE_KEY: [u8; 32] = [
+        0x3c, 0x56, 0x5b, 0xe7, 0xd1, 0xf9, 0xa6, 0x5f, 0xa8, 0x41, 0xa8, 0x12, 0x3d, 0x3d, 0x05,
+        0x49, 0xfc, 0xf6, 0x25, 0x25, 0xfe, 0x28, 0x56, 0xcf, 0xdd, 0x51, 0x93, 0xd8, 0xc3, 0x32,
+        0x8f, 0x9d,
+    ];
 
     fn with_env_locked<F: FnOnce()>(vars: &[(&str, Option<&str>)], f: F) {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Save and set
         let prev: Vec<Option<String>> = vars
             .iter()
             .map(|(k, v)| {
                 let prev = std::env::var(k).ok();
                 match v {
-                    // SAFETY: guarded by ENV_LOCK; restored before returning.
                     Some(val) => unsafe { std::env::set_var(k, val) },
                     None => unsafe { std::env::remove_var(k) },
                 }
@@ -327,146 +521,202 @@ mod tests {
 
         f();
 
-        // Restore
         for ((k, _), prev_val) in vars.iter().zip(prev.iter()) {
             match prev_val {
-                // SAFETY: guarded by ENV_LOCK.
                 Some(v) => unsafe { std::env::set_var(k, v) },
                 None => unsafe { std::env::remove_var(k) },
             }
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Pure-function tests — no env manipulation needed
-    // -------------------------------------------------------------------------
+    fn signed_license_json(expires_at: Option<u64>) -> String {
+        let mut document = LicenseDocument {
+            license_version: LICENSE_SCHEMA_VERSION,
+            license_id: "lic_test_enterprise".to_string(),
+            holder: "Example Corp".to_string(),
+            tier: "enterprise".to_string(),
+            features: vec![
+                "commercial-production".to_string(),
+                "compliance-reporting".to_string(),
+            ],
+            issued_at: 1_757_913_600,
+            expires_at,
+            signature: String::new(),
+        };
 
-    #[test]
-    fn parse_key_file_ignores_blank_lines() {
-        let content = "\n  \n\nVALID-KEY-1\n";
-        let keys = parse_key_file_content(content);
-        assert!(keys.contains("VALID-KEY-1"));
-        assert_eq!(keys.len(), 1);
+        let payload = serde_json::to_value(document.payload()).expect("payload value");
+        let canonical_payload =
+            crate::canonical_json::to_canonical_string(&payload).expect("payload json");
+        let signing_key = SigningKey::from_bytes(&TEST_PRIVATE_KEY);
+        let signature = signing_key.sign(canonical_payload.as_bytes());
+        document.signature = crate::hex::encode_hex(&signature.to_bytes());
+        serde_json::to_string(&document).expect("license json")
     }
 
     #[test]
-    fn parse_key_file_ignores_comment_lines() {
-        let content = "# comment\nREAL-KEY-999\n# another\n";
-        let keys = parse_key_file_content(content);
-        assert!(!keys.contains("# comment"));
-        assert!(keys.contains("REAL-KEY-999"));
-        assert_eq!(keys.len(), 1);
+    fn current_mode_defaults_to_community_without_license() {
+        with_env_locked(&[(LICENSE_ENV, None), (LICENSE_FILE_ENV, None)], || {
+            assert_eq!(current_mode().expect("mode"), LicenseMode::Community);
+        });
     }
 
     #[test]
-    fn parse_key_file_trims_whitespace() {
-        let content = "  PADDED-KEY  \n";
-        let keys = parse_key_file_content(content);
-        assert!(keys.contains("PADDED-KEY"));
+    fn check_allows_community_mode_without_license() {
+        with_env_locked(&[(LICENSE_ENV, None), (LICENSE_FILE_ENV, None)], || {
+            check().expect("missing license should keep community mode");
+        });
     }
 
     #[test]
-    fn parse_key_file_accepts_multiple_keys() {
-        let content = "KEY-A\nKEY-B\nKEY-C\n";
-        let keys = parse_key_file_content(content);
-        assert_eq!(keys.len(), 3);
-        assert!(keys.contains("KEY-A"));
-        assert!(keys.contains("KEY-B"));
-        assert!(keys.contains("KEY-C"));
-    }
-
-    // -------------------------------------------------------------------------
-    // Integration tests — use ENV_LOCK to serialize env mutations
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn rejects_missing_key_env() {
+    fn accepts_valid_license_from_environment() {
+        let license = signed_license_json(Some(u64::MAX));
         with_env_locked(
-            &[(LICENSE_KEY_ENV, None), (LICENSE_KEYS_FILE_ENV, None)],
+            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
             || {
-                let err = check().expect_err("should fail without key");
-                assert!(
-                    err.contains(LICENSE_KEY_ENV),
-                    "error should mention the env var: {err}"
-                );
+                check_detailed(None).expect("valid license should verify");
+                match current_mode().expect("mode") {
+                    LicenseMode::Licensed(license) => assert_eq!(license.tier, "enterprise"),
+                    LicenseMode::Community => panic!("expected licensed mode"),
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn accepts_valid_license_from_file() {
+        let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        write!(tmp, "{}", signed_license_json(Some(u64::MAX))).expect("write license");
+        let path = tmp.path().to_str().expect("path").to_string();
+
+        with_env_locked(
+            &[(LICENSE_ENV, None), (LICENSE_FILE_ENV, Some(&path))],
+            || {
+                check().expect("valid license file must be accepted");
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_license_signature() {
+        let mut document: serde_json::Value =
+            serde_json::from_str(&signed_license_json(Some(u64::MAX))).expect("license json");
+        document["holder"] = serde_json::Value::String("Tampered Holder".to_string());
+        let license = serde_json::to_string(&document).expect("tampered license");
+
+        with_env_locked(
+            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+            || {
+                let err = require_enterprise("Automated compliance reporting")
+                    .expect_err("tampered license must be rejected");
+                assert!(err.contains("signature verification failed"), "got: {err}");
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_expired_license() {
+        let license = signed_license_json(Some(1_757_913_601));
+        with_env_locked(
+            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+            || {
+                let err = require_enterprise("Commercial production execution")
+                    .expect_err("expired license must be rejected");
+                assert!(err.contains("expired"), "got: {err}");
             },
         );
     }
 
     #[test]
     fn enterprise_features_explain_the_license_requirement() {
-        with_env_locked(
-            &[(LICENSE_KEY_ENV, None), (LICENSE_KEYS_FILE_ENV, None)],
-            || {
-                let err = require_enterprise("Automated compliance reporting")
-                    .expect_err("enterprise feature should require a key");
-                assert!(err.contains("Automated compliance reporting"), "got: {err}");
-                assert!(err.contains(LICENSE_KEY_ENV), "got: {err}");
-            },
-        );
+        with_env_locked(&[(LICENSE_ENV, None), (LICENSE_FILE_ENV, None)], || {
+            let err = require_enterprise("Automated compliance reporting")
+                .expect_err("enterprise feature should require a license");
+            assert!(err.contains("Automated compliance reporting"), "got: {err}");
+            assert!(err.contains(LICENSE_ENV), "got: {err}");
+        });
     }
 
     #[test]
     fn enterprise_feature_returns_structured_license_error() {
+        with_env_locked(&[(LICENSE_ENV, None), (LICENSE_FILE_ENV, None)], || {
+            let err = require_enterprise_detailed("Automated compliance reporting")
+                .expect_err("enterprise feature should require a license");
+            assert!(matches!(err, LicenseError::LicenseRequired { .. }));
+            assert_eq!(err.code(), "LICENSE_REQUIRED");
+            assert_eq!(err.exit_code(), 3);
+        });
+    }
+
+    #[test]
+    fn rejects_empty_license_environment() {
+        with_env_locked(&[(LICENSE_ENV, Some("")), (LICENSE_FILE_ENV, None)], || {
+            let err = check().expect_err("empty environment license should fail");
+            assert!(err.contains("empty"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn current_mode_or_community_suppresses_invalid_license_material() {
         with_env_locked(
-            &[(LICENSE_KEY_ENV, None), (LICENSE_KEYS_FILE_ENV, None)],
+            &[(LICENSE_ENV, Some("{")), (LICENSE_FILE_ENV, None)],
+            || {
+                assert_eq!(current_mode_or_community(), LicenseMode::Community);
+            },
+        );
+    }
+
+    #[test]
+    fn current_mode_reports_invalid_license_material() {
+        with_env_locked(
+            &[(LICENSE_ENV, Some("{")), (LICENSE_FILE_ENV, None)],
+            || {
+                let err = current_mode().expect_err("invalid license should be reported");
+                assert!(matches!(err, LicenseError::InvalidLicenseKey { .. }));
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_future_issued_at_license() {
+        let mut document: LicenseDocument =
+            serde_json::from_str(&signed_license_json(Some(u64::MAX))).expect("license json");
+        document.issued_at = u64::MAX;
+        let payload = serde_json::to_value(document.payload()).expect("payload value");
+        let canonical_payload =
+            crate::canonical_json::to_canonical_string(&payload).expect("payload json");
+        let signing_key = SigningKey::from_bytes(&TEST_PRIVATE_KEY);
+        let signature = signing_key.sign(canonical_payload.as_bytes());
+        document.signature = crate::hex::encode_hex(&signature.to_bytes());
+        let license = serde_json::to_string(&document).expect("license");
+
+        with_env_locked(
+            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+            || {
+                let err = check_detailed(None).expect_err("future license must fail");
+                assert!(err.to_string().contains("future"), "got: {err}");
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_requested_feature_not_granted_by_license() {
+        let mut document: LicenseDocument =
+            serde_json::from_str(&signed_license_json(Some(u64::MAX))).expect("license json");
+        document.features = vec!["commercial-production".to_string()];
+        let payload = serde_json::to_value(document.payload()).expect("payload value");
+        let canonical_payload =
+            crate::canonical_json::to_canonical_string(&payload).expect("payload json");
+        let signing_key = SigningKey::from_bytes(&TEST_PRIVATE_KEY);
+        let signature = signing_key.sign(canonical_payload.as_bytes());
+        document.signature = crate::hex::encode_hex(&signature.to_bytes());
+        let license = serde_json::to_string(&document).expect("license");
+
+        with_env_locked(
+            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
             || {
                 let err = require_enterprise_detailed("Automated compliance reporting")
-                    .expect_err("enterprise feature should require a key");
-                assert!(matches!(err, LicenseError::LicenseRequired { .. }));
-                assert_eq!(err.code(), "LICENSE_REQUIRED");
-                assert_eq!(err.exit_code(), 3);
-            },
-        );
-    }
-
-    #[test]
-    fn rejects_empty_key_env() {
-        with_env_locked(
-            &[(LICENSE_KEY_ENV, Some("")), (LICENSE_KEYS_FILE_ENV, None)],
-            || {
-                let err = check().expect_err("should fail with empty key");
-                assert!(err.contains("empty"), "got: {err}");
-            },
-        );
-    }
-
-    #[test]
-    fn accepts_valid_key_from_file() {
-        let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
-        writeln!(tmp, "# TRI-SYNC license keys").unwrap();
-        writeln!(tmp, "TEST-KEY-VALID-12345").unwrap();
-        writeln!(tmp, "ANOTHER-KEY-67890").unwrap();
-        let path = tmp.path().to_str().expect("path").to_string();
-
-        with_env_locked(
-            &[
-                (LICENSE_KEY_ENV, Some("TEST-KEY-VALID-12345")),
-                (LICENSE_KEYS_FILE_ENV, Some(&path)),
-            ],
-            || {
-                check().expect("valid key must be accepted");
-            },
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_key_from_file() {
-        let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
-        writeln!(tmp, "CORRECT-KEY-ABC").unwrap();
-        let path = tmp.path().to_str().expect("path").to_string();
-
-        with_env_locked(
-            &[
-                (LICENSE_KEY_ENV, Some("WRONG-KEY-XYZ")),
-                (LICENSE_KEYS_FILE_ENV, Some(&path)),
-            ],
-            || {
-                let err = check().expect_err("wrong key must be rejected");
-                assert!(
-                    err.contains("Invalid") || err.contains("expired"),
-                    "got: {err}"
-                );
+                    .expect_err("missing granted feature must fail");
+                assert!(err.to_string().contains("does not grant"), "got: {err}");
             },
         );
     }
