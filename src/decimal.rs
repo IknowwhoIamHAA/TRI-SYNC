@@ -65,7 +65,8 @@ pub fn canonicalize_decimal(input: &str) -> Result<String, String> {
     }
     let digits = digits[non_zero_pos.expect("checked above")..].to_string();
 
-    if digits.len() > MAX_DECIMAL_DIGITS {
+    let digits_len = digits.len();
+    if digits_len > MAX_DECIMAL_DIGITS {
         return Err(format!(
             "INVALID_NUMERIC: decimal exceeds maximum digit count of {MAX_DECIMAL_DIGITS}"
         ));
@@ -75,19 +76,30 @@ pub fn canonicalize_decimal(input: &str) -> Result<String, String> {
         .checked_sub(scale)
         .ok_or_else(|| "INVALID_NUMERIC: exponent underflow".to_string())?;
     let abs_shift = shifted.unsigned_abs();
+    if abs_shift > usize::MAX as u64 {
+        return Err("INVALID_NUMERIC: exponent too large".to_string());
+    }
+    let abs_shift = abs_shift as usize;
+
+    let expanded_digits = if shifted >= 0 {
+        digits_len
+            .checked_add(abs_shift)
+            .ok_or_else(|| "INVALID_NUMERIC: exponent too large".to_string())?
+    } else {
+        digits_len.max(abs_shift)
+    };
+    if expanded_digits > MAX_DECIMAL_DIGITS {
+        return Err(format!(
+            "INVALID_NUMERIC: decimal exceeds maximum digit count of {MAX_DECIMAL_DIGITS}"
+        ));
+    }
 
     let mut canonical = if shifted >= 0 {
         let mut out = digits;
-        if abs_shift > usize::MAX as u64 {
-            return Err("INVALID_NUMERIC: exponent too large".to_string());
-        }
-        out.push_str(&"0".repeat(abs_shift as usize));
+        out.push_str(&"0".repeat(abs_shift));
         out
     } else {
-        if abs_shift > usize::MAX as u64 {
-            return Err("INVALID_NUMERIC: exponent too large".to_string());
-        }
-        let decimal_places = abs_shift as usize;
+        let decimal_places = abs_shift;
         if digits.len() > decimal_places {
             let split_at = digits.len() - decimal_places;
             format!("{}.{}", &digits[..split_at], &digits[split_at..])
@@ -217,5 +229,11 @@ mod tests {
 
         let at_limit = "1".repeat(256);
         assert!(canonicalize_decimal(&at_limit).is_ok());
+    }
+
+    #[test]
+    fn rejects_exponent_expansion_beyond_digit_limit() {
+        assert!(canonicalize_decimal("1e300").is_err());
+        assert!(canonicalize_decimal("1e-999999999").is_err());
     }
 }

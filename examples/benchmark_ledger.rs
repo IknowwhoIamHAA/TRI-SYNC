@@ -92,10 +92,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("TRI-SYNC benchmark complete");
     println!("  log_path: {}", log_path.display());
     println!("  events_ingested: {event_count}");
-    println!("  ingest_time_ms: {:.3}", ingest_elapsed.as_secs_f64() * 1_000.0);
+    println!(
+        "  ingest_time_ms: {:.3}",
+        ingest_elapsed.as_secs_f64() * 1_000.0
+    );
     println!("  throughput_events_per_sec: {:.2}", throughput);
-    println!("  load_time_ms: {:.3}", load_elapsed.as_secs_f64() * 1_000.0);
-    println!("  verify_time_ms: {:.3}", verify_elapsed.as_secs_f64() * 1_000.0);
+    println!(
+        "  load_time_ms: {:.3}",
+        load_elapsed.as_secs_f64() * 1_000.0
+    );
+    println!(
+        "  verify_time_ms: {:.3}",
+        verify_elapsed.as_secs_f64() * 1_000.0
+    );
     println!("  sha256_chain_verified: true");
 
     Ok(())

@@ -15,11 +15,10 @@
    - `InMemoryBackend` — test/iteration backend with no filesystem dependency.
    - `ReplayEngine` — pure protocol logic over event slices; can replay from genesis or
      resume from a trusted `TICK_SEAL` snapshot checkpoint.
-4. **Execution Layer** — Deterministic workflow runner.
-5. **CLI Layer** — Developer interface for running, inspecting, replaying.
+4. **CLI Layer** — Developer interface for running, inspecting, replaying.
    - `apply` and `delete` subcommands accept a `--tick` flag (default `0`).
-   - `verify --checkpoint-root <digest>` reuses a verified snapshot cache to validate
-     only the suffix after the trusted checkpoint.
+   - `verify --checkpoint-root <digest>` currently performs a two-phase in-memory replay:
+     replay through the trusted checkpoint, then verify only the suffix against that state.
    - Protocol violations are emitted as structured JSON for compliance monitoring.
 
 ## Data Flow

@@ -362,3 +362,36 @@ fn enterprise_gated_command_without_license_emits_json_error() {
     assert_eq!(json["code"], "LICENSE_REQUIRED");
     assert_eq!(json["exit_code"], 3);
 }
+
+#[test]
+fn apply_rejects_reserved_system_namespace() {
+    let temp = tempdir().expect("tempdir");
+    let log_path = temp.path().join("events.jsonl");
+
+    let output = Command::new(tri_sync_bin())
+        .args([
+            "apply",
+            "--log",
+            log_path.to_str().expect("log path"),
+            "--namespace",
+            "trisync-system",
+            "--key",
+            "job-status",
+            "--value",
+            "running",
+            "--tick",
+            "1",
+        ])
+        .output()
+        .expect("run apply");
+
+    assert!(!output.status.success(), "apply unexpectedly succeeded");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    let json: serde_json::Value = serde_json::from_str(stderr.trim()).expect("json stderr");
+    assert_eq!(json["code"], "INVALID_EVENT_FORMAT");
+    let message = json["message"].as_str().expect("message string");
+    assert!(
+        message.contains("INVALID_NAMESPACE"),
+        "unexpected message: {message}"
+    );
+}

@@ -396,9 +396,14 @@ fn verify_license_document(
     }
 
     if let Some(requested_feature) = feature.as_deref() {
-        let Some(required_capability) = required_license_feature(requested_feature) else {
-            return Ok(());
-        };
+        let required_capability = required_license_feature(requested_feature).ok_or_else(|| {
+            LicenseError::InvalidLicenseKey {
+                feature: feature.clone(),
+                detail: format!(
+                    "Unknown enterprise feature `{requested_feature}` requested for license validation."
+                ),
+            }
+        })?;
 
         if !document
             .features
@@ -717,6 +722,23 @@ mod tests {
                 let err = require_enterprise_detailed("Automated compliance reporting")
                     .expect_err("missing granted feature must fail");
                 assert!(err.to_string().contains("does not grant"), "got: {err}");
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_unrecognized_requested_feature_name() {
+        let license = signed_license_json(Some(u64::MAX));
+        with_env_locked(
+            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+            || {
+                let err = require_enterprise_detailed("Unknown enterprise capability")
+                    .expect_err("unknown requested feature must fail closed");
+                assert!(matches!(err, LicenseError::InvalidLicenseKey { .. }));
+                assert!(
+                    err.to_string().contains("Unknown enterprise feature"),
+                    "got: {err}"
+                );
             },
         );
     }

@@ -17,17 +17,6 @@ impl TenantKey {
 }
 
 pub fn validate_namespace(namespace: &str) -> Result<(), String> {
-    validate_namespace_with_options(namespace, false)
-}
-
-pub fn validate_runtime_namespace(namespace: &str) -> Result<(), String> {
-    validate_namespace_with_options(namespace, true)
-}
-
-fn validate_namespace_with_options(
-    namespace: &str,
-    allow_reserved_system_namespace: bool,
-) -> Result<(), String> {
     let bytes = namespace.as_bytes();
     if !(3..=63).contains(&bytes.len()) {
         return Err("INVALID_NAMESPACE: namespace must be 3-63 bytes".to_string());
@@ -44,7 +33,7 @@ fn validate_namespace_with_options(
         }
     }
 
-    if !allow_reserved_system_namespace && namespace == RESERVED_SYSTEM_NAMESPACE {
+    if namespace == RESERVED_SYSTEM_NAMESPACE {
         return Err(format!(
             "INVALID_NAMESPACE: namespace '{RESERVED_SYSTEM_NAMESPACE}' is reserved and may not be used by tenants"
         ));

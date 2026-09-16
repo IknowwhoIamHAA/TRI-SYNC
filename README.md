@@ -28,7 +28,7 @@ The open community core includes deterministic logging, digest generation, verif
 
 ```bash
 ./target/release/tri-sync digest --input "hello"
-# ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+# 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
 ```
 
 ### 3 — Unlock enterprise features offline
@@ -67,7 +67,7 @@ tri-sync delete \
 # Verify the log and print the final root digest
 tri-sync verify --log events.jsonl
 
-# Resume verification from a trusted prior TICK_SEAL checkpoint root
+# Verify against a trusted prior TICK_SEAL checkpoint root
 tri-sync verify --log events.jsonl \
   --checkpoint-root 768e154f...
 
@@ -216,7 +216,7 @@ impl EventLogBackend for CustomBackend {
 }
 ```
 
-Checkpoint verification stores verified snapshot caches beside the log so later `verify --checkpoint-root <digest>` runs can replay only the tail after the trusted `TICK_SEAL`.
+Checkpoint-root verification is currently implemented as a two-phase replay in memory: TRI-SYNC replays from genesis through the matching `TICK_SEAL` to reconstruct the checkpoint state, then replays the remaining tail against that state.
 
 ---
 

@@ -150,7 +150,6 @@ fn run() -> Result<(), CliError> {
             }
 
             let backend = FileSystemBackend::open(log.clone());
-            backend.lock_for_write()?;
 
             let tail = backend.tail_metadata()?;
             let seq = tail.next_seq;
@@ -188,7 +187,6 @@ fn run() -> Result<(), CliError> {
             }
 
             let backend = FileSystemBackend::open(log.clone());
-            backend.lock_for_write()?;
 
             let tail = backend.tail_metadata()?;
             let seq = tail.next_seq;
