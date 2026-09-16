@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -10,13 +10,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::canonical_json::to_canonical_string;
 use crate::digest::sha256_hex;
-use crate::event::{Event, ZERO_DIGEST_HEX};
+use crate::error::ProtocolViolationError;
+use crate::event::{Event, EventType, ZERO_DIGEST_HEX};
+use crate::hex::decode_hex;
+use crate::replay::ReplayEngine;
+use crate::state_map::StateSnapshot;
 
 const SEGMENT_PREFIX: &str = "#SEGMENT ";
 const PROTOCOL_VERSION: &str = "1.0.0";
 const CATALOG_VERSION: &str = "1.0.0";
 const DEFAULT_MAX_EVENTS_PER_SEGMENT: u64 = 10_000;
 const DEFAULT_MAX_BYTES_PER_SEGMENT: u64 = 4 * 1024 * 1024;
+const SNAPSHOT_FILE_SUFFIX: &str = ".snapshot.bin";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SegmentHeader {
@@ -151,17 +156,36 @@ impl AppendOnlyEventLog {
         &self.path
     }
 
-    pub fn append(&self, event: &Event) -> Result<(), Box<dyn Error>> {
+    pub fn append(&self, event: &Event) -> Result<(), ProtocolViolationError> {
+        self.append_batch(std::slice::from_ref(event))
+    }
+
+    /// Append a batch of events while holding the filesystem lock once.
+    ///
+    /// Durability boundary: segment lines are flushed before the catalog write.
+    /// If the process exits before catalog persistence, `read_catalog_reconciled`
+    /// recovers tail metadata from the active segment on next open.
+    pub fn append_batch(&self, events: &[Event]) -> Result<(), ProtocolViolationError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
         let lock_path = self.lock_path();
         let lock_file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
             .open(&lock_path)?;
-        lock_file.lock_exclusive()?;
-        let result = self.append_under_lock(event);
+        lock_file
+            .lock_exclusive()
+            .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
+        let result = self.append_batch_under_lock(events);
         drop(lock_file);
-        result
+        let sealed_roots = result?;
+        for root in sealed_roots {
+            self.persist_snapshot_for_root(&root)?;
+        }
+        Ok(())
     }
 
     pub fn lock_for_write(&self) -> Result<(), Box<dyn Error>> {
@@ -240,74 +264,231 @@ impl AppendOnlyEventLog {
         })
     }
 
-    fn append_under_lock(&self, event: &Event) -> Result<(), Box<dyn Error>> {
-        if self.catalog_path().exists() {
-            return self.append_segmented_under_lock(event);
+    pub fn load_snapshot_for_root(
+        &self,
+        checkpoint_root: &str,
+    ) -> Result<Option<StateSnapshot>, Box<dyn Error>> {
+        let path = self.snapshot_path_for_root(checkpoint_root);
+        if !path.exists() {
+            return Ok(None);
         }
-
-        if self.path.exists() && self.path.metadata()?.len() > 0 {
-            self.migrate_legacy_log_under_lock()?;
-            return self.append_segmented_under_lock(event);
-        }
-
-        self.append_segmented_under_lock(event)
+        let bytes = std::fs::read(path)?;
+        let snapshot = StateSnapshot::from_binary(&bytes)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        Ok(Some(snapshot))
     }
 
-    fn append_segmented_under_lock(&self, event: &Event) -> Result<(), Box<dyn Error>> {
-        let mut catalog = self.read_catalog_reconciled_optional()?.unwrap_or_else(|| {
-            SegmentCatalog::new(self.max_events_per_segment, self.max_bytes_per_segment)
-        });
-
-        let expected_seq = catalog.next_seq;
-        if event.seq != expected_seq {
-            return Err(if event.seq < expected_seq {
-                format!(
-                    "SEQUENCE_COLLISION: namespace {} already contains seq {}",
-                    event.namespace, event.seq
-                )
-                .into()
-            } else {
-                format!("SEQ_GAP: expected seq {}, got {}", expected_seq, event.seq).into()
-            });
+    fn append_batch_under_lock(
+        &self,
+        events: &[Event],
+    ) -> Result<Vec<String>, ProtocolViolationError> {
+        if self.catalog_path().exists() {
+            return self.append_segmented_under_lock(events);
         }
 
-        event.validate_prev_digest(&catalog.head_digest)?;
-        event.validate_digest()?;
+        if self.path.exists()
+            && self
+                .path
+                .metadata()
+                .map_err(ProtocolViolationError::from)?
+                .len()
+                > 0
+        {
+            self.migrate_legacy_log_under_lock().map_err(|err| {
+                ProtocolViolationError::invalid_event_format(None, err.to_string())
+            })?;
+            return self.append_segmented_under_lock(events);
+        }
 
-        if let Some(namespace) = &catalog.namespace {
-            if namespace != &event.namespace {
-                return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
+        self.append_segmented_under_lock(events)
+    }
+
+    fn append_segmented_under_lock(
+        &self,
+        events: &[Event],
+    ) -> Result<Vec<String>, ProtocolViolationError> {
+        let mut catalog = self
+            .read_catalog_reconciled_optional()
+            .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?
+            .unwrap_or_else(|| {
+                SegmentCatalog::new(self.max_events_per_segment, self.max_bytes_per_segment)
+            });
+        self.ensure_segment_storage()
+            .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
+        let mut open_segment_name: Option<String> = None;
+        let mut writer: Option<BufWriter<File>> = None;
+        let mut catalog_dirty = false;
+        let mut sealed_roots = Vec::new();
+
+        for event in events {
+            let expected_seq = catalog.next_seq;
+            if event.seq != expected_seq {
+                return Err(if event.seq < expected_seq {
+                    ProtocolViolationError::sequence_collision(
+                        Some(event.namespace.clone()),
+                        event.seq,
+                        format!(
+                            "SEQUENCE_COLLISION: namespace {} already contains seq {}",
+                            event.namespace, event.seq
+                        ),
+                    )
+                } else {
+                    ProtocolViolationError::SequenceGap {
+                        expected_seq,
+                        actual_seq: event.seq,
+                    }
+                });
+            }
+
+            event
+                .validate_prev_digest(&catalog.head_digest)
+                .map_err(ProtocolViolationError::from_message)?;
+            event
+                .validate_digest()
+                .map_err(ProtocolViolationError::from_message)?;
+
+            if let Some(namespace) = &catalog.namespace {
+                if namespace != &event.namespace {
+                    return Err(ProtocolViolationError::namespace_breach(
+                        Some(namespace.clone()),
+                        Some(event.namespace.clone()),
+                        event.key.clone(),
+                        "NAMESPACE_LEAK: mixed namespaces in one log file".to_string(),
+                    ));
+                }
+            }
+
+            let line = to_canonical_string(
+                &serde_json::to_value(event).map_err(ProtocolViolationError::from)?,
+            )?;
+            let line_len = line.len() as u64 + 1;
+            let previous_active = catalog.active_segment_id.clone();
+            self.roll_segment_if_needed(&mut catalog, line_len, event)
+                .map_err(|err| {
+                    ProtocolViolationError::invalid_event_format(None, err.to_string())
+                })?;
+            if catalog.active_segment_id != previous_active {
+                if let Some(writer) = writer.as_mut() {
+                    writer.flush().map_err(ProtocolViolationError::from)?;
+                }
+                writer = None;
+                open_segment_name = None;
+                self.write_catalog(&catalog).map_err(|err| {
+                    ProtocolViolationError::invalid_event_format(None, err.to_string())
+                })?;
+            }
+
+            let file_name = catalog
+                .active_segment()
+                .ok_or_else(|| {
+                    ProtocolViolationError::invalid_event_format(
+                        None,
+                        "INVALID_SEGMENT: missing active segment after initialization",
+                    )
+                })?
+                .file_name
+                .clone();
+            if open_segment_name.as_deref() != Some(file_name.as_str()) {
+                if let Some(writer) = writer.as_mut() {
+                    writer.flush().map_err(ProtocolViolationError::from)?;
+                }
+                let segment_path = self.segment_path(&file_name);
+                let file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&segment_path)
+                    .map_err(ProtocolViolationError::from)?;
+                writer = Some(BufWriter::new(file));
+                open_segment_name = Some(file_name.clone());
+            }
+
+            let active_writer = writer.as_mut().ok_or_else(|| {
+                ProtocolViolationError::invalid_event_format(
+                    None,
+                    "INVALID_SEGMENT: active segment writer unavailable",
+                )
+            })?;
+            writeln!(active_writer, "{line}").map_err(ProtocolViolationError::from)?;
+
+            let active_segment = catalog.active_segment_mut().ok_or_else(|| {
+                ProtocolViolationError::invalid_event_format(
+                    None,
+                    "INVALID_SEGMENT: missing active segment after initialization",
+                )
+            })?;
+            active_segment.seq_end = event.seq;
+            active_segment.last_digest = event.digest.clone();
+            active_segment.event_count += 1;
+            active_segment.size_bytes += line_len;
+
+            if catalog.namespace.is_none() {
+                catalog.namespace = Some(event.namespace.clone());
+            }
+            catalog.next_seq = event.seq + 1;
+            catalog.head_digest = event.digest.clone();
+            catalog_dirty = true;
+
+            if event.event_type == EventType::TickSeal
+                && let Some(root) = event.root_digest.as_deref()
+            {
+                sealed_roots.push(root.to_string());
             }
         }
 
-        let line = to_canonical_string(&serde_json::to_value(event)?)?;
-        let line_len = line.len() as u64 + 1;
-        self.ensure_segment_storage()?;
-        self.roll_segment_if_needed(&mut catalog, line_len, event)?;
-
-        let active_segment = catalog
-            .active_segment_mut()
-            .ok_or("INVALID_SEGMENT: missing active segment after initialization")?;
-        let segment_path = self.segment_path(&active_segment.file_name);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&segment_path)?;
-        writeln!(file, "{line}")?;
-        drop(file);
-
-        active_segment.seq_end = event.seq;
-        active_segment.last_digest = event.digest.clone();
-        active_segment.event_count += 1;
-        active_segment.size_bytes += line_len;
-
-        if catalog.namespace.is_none() {
-            catalog.namespace = Some(event.namespace.clone());
+        if let Some(writer) = writer.as_mut() {
+            writer.flush().map_err(ProtocolViolationError::from)?;
         }
-        catalog.next_seq = event.seq + 1;
-        catalog.head_digest = event.digest.clone();
+        if catalog_dirty {
+            self.write_catalog(&catalog).map_err(|err| {
+                ProtocolViolationError::invalid_event_format(None, err.to_string())
+            })?;
+        }
+        Ok(sealed_roots)
+    }
 
-        self.write_catalog(&catalog)?;
+    fn persist_snapshot_for_root(
+        &self,
+        checkpoint_root: &str,
+    ) -> Result<(), ProtocolViolationError> {
+        let events = self
+            .load()
+            .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
+        let Some((checkpoint_index, checkpoint_event)) =
+            events.iter().enumerate().find(|(_, event)| {
+                event.event_type == EventType::TickSeal
+                    && event.root_digest.as_deref() == Some(checkpoint_root)
+            })
+        else {
+            return Ok(());
+        };
+
+        let checkpoint_state = ReplayEngine::replay(&events[..=checkpoint_index])?;
+        let seal_timestamp_ms = checkpoint_event.timestamp_ms.ok_or_else(|| {
+            ProtocolViolationError::invalid_event_format(
+                Some(checkpoint_event.seq),
+                "TICK_SEAL missing timestamp_ms",
+            )
+        })?;
+        let root_bytes =
+            decode_array_32(checkpoint_root).map_err(ProtocolViolationError::from_message)?;
+        let seal_bytes = decode_array_32(&checkpoint_event.digest)
+            .map_err(ProtocolViolationError::from_message)?;
+        let snapshot = StateSnapshot {
+            namespace: checkpoint_event.namespace.clone(),
+            tick: checkpoint_event.tick,
+            seal_seq: checkpoint_event.seq,
+            seal_timestamp_ms,
+            root_digest: root_bytes,
+            seal_digest: seal_bytes,
+            state: checkpoint_state,
+        };
+
+        let encoded = snapshot
+            .to_binary()
+            .map_err(ProtocolViolationError::from_message)?;
+        std::fs::create_dir_all(self.snapshots_dir()).map_err(ProtocolViolationError::from)?;
+        std::fs::write(self.snapshot_path_for_root(checkpoint_root), encoded)
+            .map_err(ProtocolViolationError::from)?;
         Ok(())
     }
 
@@ -557,6 +738,15 @@ impl AppendOnlyEventLog {
         self.segments_dir().join(file_name)
     }
 
+    fn snapshots_dir(&self) -> PathBuf {
+        self.derived_path(".snapshots")
+    }
+
+    fn snapshot_path_for_root(&self, checkpoint_root: &str) -> PathBuf {
+        self.snapshots_dir()
+            .join(format!("{checkpoint_root}{SNAPSHOT_FILE_SUFFIX}"))
+    }
+
     fn ordered_segments<'a>(
         &self,
         catalog: &'a SegmentCatalog,
@@ -731,6 +921,13 @@ fn parse_event_line(line: &str, path: &Path, line_number: usize) -> Result<Event
     })
 }
 
+fn decode_array_32(value: &str) -> Result<[u8; 32], String> {
+    let bytes = decode_hex(value)?;
+    bytes
+        .try_into()
+        .map_err(|_| "expected 32-byte digest".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -740,7 +937,7 @@ mod tests {
     use serde_json::Value;
 
     use crate::event::{Event, ZERO_DIGEST_HEX};
-    use crate::state_map::BsmValue;
+    use crate::state_map::{BinaryStateMap, BsmValue};
 
     use super::AppendOnlyEventLog;
 
@@ -787,6 +984,105 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("lock"));
         let _ = fs::remove_file(PathBuf::from(format!("{}.catalog.json", path.display())));
+    }
+
+    #[test]
+    fn append_batch_appends_multiple_events_under_single_catalog_flush() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("current time should be later than epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tri-sync-batch-{unique}.jsonl"));
+        let log = AppendOnlyEventLog::open(&path);
+
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        let second = Event::state_write(
+            1,
+            1,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("second");
+        let third = Event::state_delete(
+            2,
+            1,
+            "tenant-a",
+            "tenant-a:key",
+            None,
+            true,
+            second.digest.clone(),
+        )
+        .expect("third");
+
+        log.append_batch(&[first.clone(), second.clone(), third.clone()])
+            .expect("append batch");
+
+        let loaded = log.load().expect("load");
+        assert_eq!(loaded, vec![first, second, third]);
+        let tail = log.tail_metadata().expect("tail");
+        assert_eq!(tail.next_seq, 3);
+    }
+
+    #[test]
+    fn tick_seal_persists_snapshot_cache() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tri-sync-snapshot-{unique}.jsonl"));
+        let log = AppendOnlyEventLog::open(&path);
+
+        let first = Event::state_write(
+            0,
+            1,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        log.append(&first).expect("append first");
+
+        let mut state = BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+            .expect("set");
+        let root = state.root_digest_hex().expect("root");
+        let seal = Event::tick_seal(
+            1,
+            1,
+            "tenant-a",
+            1,
+            root.clone(),
+            first.digest.clone(),
+            1_000,
+        )
+        .expect("seal");
+        log.append(&seal).expect("append seal");
+
+        let snapshot = log
+            .load_snapshot_for_root(&root)
+            .expect("load snapshot")
+            .expect("snapshot exists");
+        assert_eq!(snapshot.seal_seq, 1);
+        assert_eq!(snapshot.tick, 1);
+        assert_eq!(snapshot.namespace, "tenant-a");
     }
 
     #[test]

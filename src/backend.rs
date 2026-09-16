@@ -37,6 +37,7 @@ use std::sync::Mutex;
 use crate::error::ProtocolViolationError;
 use crate::event::{Event, ZERO_DIGEST_HEX};
 use crate::event_log::{AppendOnlyEventLog, SegmentHeader};
+use crate::state_map::StateSnapshot;
 
 /// Storage abstraction for event-log persistence.
 ///
@@ -45,6 +46,12 @@ use crate::event_log::{AppendOnlyEventLog, SegmentHeader};
 /// without changing replay or verification logic.
 pub trait EventLogBackend: Send + Sync {
     fn append(&self, event: &Event) -> Result<(), ProtocolViolationError>;
+    fn append_batch(&self, events: &[Event]) -> Result<(), ProtocolViolationError> {
+        for event in events {
+            self.append(event)?;
+        }
+        Ok(())
+    }
     fn load(&self) -> Result<Vec<Event>, ProtocolViolationError>;
     fn next_sequence(&self) -> Result<u64, ProtocolViolationError>;
     fn lock_for_write(&self) -> Result<(), ProtocolViolationError>;
@@ -79,13 +86,24 @@ impl FileSystemBackend {
             .tail_metadata()
             .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
     }
+
+    pub fn load_snapshot_for_root(
+        &self,
+        checkpoint_root: &str,
+    ) -> Result<Option<StateSnapshot>, ProtocolViolationError> {
+        self.inner
+            .load_snapshot_for_root(checkpoint_root)
+            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
+    }
 }
 
 impl EventLogBackend for FileSystemBackend {
     fn append(&self, event: &Event) -> Result<(), ProtocolViolationError> {
-        self.inner
-            .append(event)
-            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
+        self.inner.append(event)
+    }
+
+    fn append_batch(&self, events: &[Event]) -> Result<(), ProtocolViolationError> {
+        self.inner.append_batch(events)
     }
 
     fn load(&self) -> Result<Vec<Event>, ProtocolViolationError> {
@@ -180,6 +198,63 @@ impl EventLogBackend for InMemoryBackend {
         Ok(())
     }
 
+    fn append_batch(&self, events: &[Event]) -> Result<(), ProtocolViolationError> {
+        let mut guard = self.events.lock().map_err(|_| {
+            ProtocolViolationError::invalid_event_format(
+                None,
+                "in-memory backend mutex was poisoned",
+            )
+        })?;
+
+        for event in events {
+            let expected_seq = guard.last().map_or(0, |last| last.seq + 1);
+            if event.seq != expected_seq {
+                return Err(if event.seq < expected_seq {
+                    ProtocolViolationError::sequence_collision(
+                        Some(event.namespace.clone()),
+                        event.seq,
+                        format!(
+                            "SEQUENCE_COLLISION: namespace {} already contains seq {}",
+                            event.namespace, event.seq
+                        ),
+                    )
+                } else {
+                    ProtocolViolationError::SequenceGap {
+                        expected_seq,
+                        actual_seq: event.seq,
+                    }
+                });
+            }
+
+            let expected_prev = guard
+                .last()
+                .map_or(ZERO_DIGEST_HEX.to_string(), |last| last.digest.clone());
+            event
+                .validate_prev_digest(&expected_prev)
+                .map_err(ProtocolViolationError::from_message)?;
+            event
+                .validate_digest()
+                .map_err(ProtocolViolationError::from_message)?;
+
+            if let Some(last) = guard.last()
+                && last.namespace != event.namespace
+            {
+                return Err(ProtocolViolationError::namespace_breach(
+                    Some(last.namespace.clone()),
+                    Some(event.namespace.clone()),
+                    event.key.clone(),
+                    format!(
+                        "NAMESPACE_LEAK: mixed namespaces in one log backend (expected {}, got {})",
+                        last.namespace, event.namespace
+                    ),
+                ));
+            }
+
+            guard.push(event.clone());
+        }
+        Ok(())
+    }
+
     fn load(&self) -> Result<Vec<Event>, ProtocolViolationError> {
         self.events
             .lock()
@@ -244,5 +319,40 @@ mod tests {
         let events = backend.load().expect("load");
         assert_eq!(events, vec![first]);
         assert_eq!(backend.next_sequence().expect("next seq"), 1);
+    }
+
+    #[test]
+    fn in_memory_backend_append_batch_updates_sequence() {
+        let backend = InMemoryBackend::new();
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first event");
+        let second = Event::state_write(
+            1,
+            1,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("second event");
+
+        backend
+            .append_batch(&[first.clone(), second.clone()])
+            .expect("append batch");
+
+        let events = backend.load().expect("load");
+        assert_eq!(events, vec![first, second]);
+        assert_eq!(backend.next_sequence().expect("next seq"), 2);
     }
 }

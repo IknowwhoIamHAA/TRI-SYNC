@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::{fs, io, io::Read};
 
 use clap::{Parser, Subcommand};
 use tri_sync::backend::{EventLogBackend, FileSystemBackend};
@@ -7,7 +8,7 @@ use tri_sync::digest::sha256_hex;
 use tri_sync::error::ProtocolViolationError;
 use tri_sync::event::Event;
 use tri_sync::license;
-use tri_sync::replay::{ReplayEngine, verify_events};
+use tri_sync::replay::{ReplayEngine, verify_events_with_snapshot};
 use tri_sync::state_map::BsmValue;
 
 #[derive(Parser)]
@@ -43,6 +44,18 @@ enum Commands {
         key: String,
         #[arg(long, default_value_t = 0)]
         tick: u64,
+        #[arg(long)]
+        production: bool,
+    },
+    ApplyBatch {
+        #[arg(long)]
+        log: PathBuf,
+        #[arg(long)]
+        namespace: String,
+        /// Path to newline-delimited JSON operations.
+        /// When omitted, operations are read from stdin.
+        #[arg(long)]
+        input: Option<PathBuf>,
         #[arg(long)]
         production: bool,
     },
@@ -111,6 +124,22 @@ enum CliError {
     License(license::LicenseError),
 }
 
+#[derive(serde::Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+enum BatchOperation {
+    Apply {
+        key: String,
+        value: String,
+        #[serde(default)]
+        tick: u64,
+    },
+    Delete {
+        key: String,
+        #[serde(default)]
+        tick: u64,
+    },
+}
+
 impl From<ProtocolViolationError> for CliError {
     fn from(value: ProtocolViolationError) -> Self {
         Self::Protocol(value)
@@ -150,7 +179,6 @@ fn run() -> Result<(), CliError> {
             }
 
             let backend = FileSystemBackend::open(log.clone());
-            backend.lock_for_write()?;
 
             let tail = backend.tail_metadata()?;
             let seq = tail.next_seq;
@@ -188,7 +216,6 @@ fn run() -> Result<(), CliError> {
             }
 
             let backend = FileSystemBackend::open(log.clone());
-            backend.lock_for_write()?;
 
             let tail = backend.tail_metadata()?;
             let seq = tail.next_seq;
@@ -207,6 +234,82 @@ fn run() -> Result<(), CliError> {
 
             backend.append(&event)?;
             println!("appended STATE_DELETE at seq {}", event.seq);
+        }
+
+        Commands::ApplyBatch {
+            log,
+            namespace,
+            input,
+            production,
+        } => {
+            if production {
+                require_enterprise_feature(
+                    "Commercial production execution",
+                    namespace.clone(),
+                    0,
+                )?;
+            }
+
+            let operations = read_batch_operations(input)?;
+            if operations.is_empty() {
+                return Err(CliError::Protocol(
+                    ProtocolViolationError::invalid_event_format(
+                        None,
+                        "empty batch: no operations provided",
+                    ),
+                ));
+            }
+
+            let backend = FileSystemBackend::open(log.clone());
+            let tail = backend.tail_metadata()?;
+            let mut prev_digest = tail.prev_digest;
+            let mut events = Vec::with_capacity(operations.len());
+            let mut state_writes = 0usize;
+            let mut state_deletes = 0usize;
+
+            for (seq, op) in (tail.next_seq..).zip(operations) {
+                let event = match op {
+                    BatchOperation::Apply { key, value, tick } => {
+                        state_writes += 1;
+                        Event::state_write(
+                            seq,
+                            tick,
+                            namespace.clone(),
+                            format!("{namespace}:{key}"),
+                            BsmValue::Bytes(value.into_bytes()),
+                            false,
+                            prev_digest.clone(),
+                            None,
+                        )
+                        .map_err(CliError::from)?
+                    }
+                    BatchOperation::Delete { key, tick } => {
+                        state_deletes += 1;
+                        Event::state_delete(
+                            seq,
+                            tick,
+                            namespace.clone(),
+                            format!("{namespace}:{key}"),
+                            None,
+                            true,
+                            prev_digest.clone(),
+                        )
+                        .map_err(CliError::from)?
+                    }
+                };
+                prev_digest = event.digest.clone();
+                events.push(event);
+            }
+
+            backend.append_batch(&events)?;
+            let ending_seq = events.last().map(|e| e.seq).unwrap_or(0);
+            println!(
+                "appended {} events (state_writes={}, state_deletes={}) ending at seq {}",
+                events.len(),
+                state_writes,
+                state_deletes,
+                ending_seq
+            );
         }
 
         Commands::Replay { log } => {
@@ -230,7 +333,13 @@ fn run() -> Result<(), CliError> {
         } => {
             let backend = FileSystemBackend::open(log.clone());
             let events = backend.load()?;
-            let outcome = verify_events(&events, checkpoint_root.as_deref())?;
+            let cached_snapshot = if let Some(root) = checkpoint_root.as_deref() {
+                backend.load_snapshot_for_root(root).ok().flatten()
+            } else {
+                None
+            };
+            let outcome =
+                verify_events_with_snapshot(&events, checkpoint_root.as_deref(), cached_snapshot)?;
 
             println!("OK");
             println!("log={}", log.display());
@@ -379,4 +488,63 @@ fn report_protocol_failure(err: &ProtocolViolationError) {
 
 fn report_license_failure(err: &license::LicenseError) {
     eprintln!("{}", err.to_stderr_json());
+}
+
+fn read_batch_operations(input: Option<PathBuf>) -> Result<Vec<BatchOperation>, CliError> {
+    let content = if let Some(path) = input {
+        fs::read_to_string(path).map_err(|err| {
+            CliError::Protocol(ProtocolViolationError::invalid_event_format(
+                None,
+                format!("failed to read batch input: {err}"),
+            ))
+        })?
+    } else {
+        let mut full = String::new();
+        io::stdin().read_to_string(&mut full).map_err(|err| {
+            CliError::Protocol(ProtocolViolationError::invalid_event_format(
+                None,
+                format!("failed to read batch input from stdin: {err}"),
+            ))
+        })?;
+        full
+    };
+
+    parse_batch_operations(&content)
+}
+
+fn parse_batch_operations(content: &str) -> Result<Vec<BatchOperation>, CliError> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if trimmed.starts_with('[') {
+        return serde_json::from_str::<Vec<BatchOperation>>(trimmed).map_err(|err| {
+            CliError::Protocol(ProtocolViolationError::invalid_event_format(
+                None,
+                format!("invalid batch JSON array: {err}"),
+            ))
+        });
+    }
+
+    trimmed
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| {
+            let line = line.trim();
+            if line.is_empty() {
+                None
+            } else {
+                Some((idx + 1, line))
+            }
+        })
+        .map(|(line_no, line)| {
+            serde_json::from_str::<BatchOperation>(line).map_err(|err| {
+                CliError::Protocol(ProtocolViolationError::invalid_event_format(
+                    None,
+                    format!("invalid batch operation at line {line_no}: {err}"),
+                ))
+            })
+        })
+        .collect()
 }

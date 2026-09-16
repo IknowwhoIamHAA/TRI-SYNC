@@ -28,7 +28,7 @@ The open community core includes deterministic logging, digest generation, verif
 
 ```bash
 ./target/release/tri-sync digest --input "hello"
-# ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+# 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
 ```
 
 ### 3 — Unlock enterprise features offline
@@ -64,10 +64,16 @@ tri-sync delete \
   --key job-status \
   --tick 2
 
+# Append many operations in one process (JSONL file or stdin)
+tri-sync apply-batch \
+  --log events.jsonl \
+  --namespace tenant-a \
+  --input ops.jsonl
+
 # Verify the log and print the final root digest
 tri-sync verify --log events.jsonl
 
-# Resume verification from a trusted prior TICK_SEAL checkpoint root
+# Verify against a trusted prior TICK_SEAL checkpoint root
 tri-sync verify --log events.jsonl \
   --checkpoint-root 768e154f...
 
@@ -101,7 +107,7 @@ Protocol violations are emitted to `stderr` as JSON with distinct exit codes:
 
 | Exit code | Category | Examples |
 |---|---|---|
-| `4` | Sequence / digest / format | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat` |
+| `4` | Sequence / digest / input validation | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat`, `InvalidNamespace` |
 | `5` | Namespace isolation | `NamespaceBreach` |
 | `6` | Checkpoint / replayed state | `StateMismatch`, `MissingTickSeal` |
 
@@ -216,7 +222,13 @@ impl EventLogBackend for CustomBackend {
 }
 ```
 
-Checkpoint verification stores verified snapshot caches beside the log so later `verify --checkpoint-root <digest>` runs can replay only the tail after the trusted `TICK_SEAL`.
+Batch ingestion is available through `append_batch(&[Event])`. For the filesystem backend, TRI-SYNC holds the lock once, streams all batch events, flushes segment lines, and then persists catalog metadata at the end of the batch.
+
+`tri-sync apply-batch` accepts newline-delimited JSON operations from `--input <file>` or stdin. Supported operations are:
+- `{"op":"apply","key":"<key>","value":"<value>","tick":<u64>}`
+- `{"op":"delete","key":"<key>","tick":<u64>}`
+
+Checkpoint verification persists trusted `TICK_SEAL` snapshots at append time in `<log>.snapshots/`. During `verify --checkpoint-root <digest>`, TRI-SYNC attempts to load the cached snapshot first and falls back to replaying from genesis through the checkpoint when no cache is available.
 
 ---
 

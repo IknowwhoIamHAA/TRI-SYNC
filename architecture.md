@@ -12,14 +12,15 @@
    - `FileSystemBackend` — wraps `AppendOnlyEventLog`, acquires an exclusive OS-level
      lock on a `.lock` sidecar before each append, and updates `SegmentHeader.seq_end`
      atomically via `.tmp` + `rename`.
+   - Batched appends hold the lock once, stream event lines to the active segment, and
+     persist catalog metadata as the batch durability boundary.
    - `InMemoryBackend` — test/iteration backend with no filesystem dependency.
    - `ReplayEngine` — pure protocol logic over event slices; can replay from genesis or
      resume from a trusted `TICK_SEAL` snapshot checkpoint.
-4. **Execution Layer** — Deterministic workflow runner.
-5. **CLI Layer** — Developer interface for running, inspecting, replaying.
+4. **CLI Layer** — Developer interface for running, inspecting, replaying.
    - `apply` and `delete` subcommands accept a `--tick` flag (default `0`).
-   - `verify --checkpoint-root <digest>` reuses a verified snapshot cache to validate
-     only the suffix after the trusted checkpoint.
+   - `verify --checkpoint-root <digest>` loads a persisted `StateSnapshot` cache from
+     `<log>.snapshots/` when present, and falls back to replay-through-checkpoint otherwise.
    - Protocol violations are emitted as structured JSON for compliance monitoring.
 
 ## Data Flow

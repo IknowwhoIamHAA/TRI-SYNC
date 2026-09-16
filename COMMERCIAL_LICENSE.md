@@ -1,11 +1,11 @@
 # TRI-SYNC Commercial License
 
-Copyright (c) 2026 TRI-SYNC. All rights reserved.
+Copyright (c) 2026 TRI SYNC LLC. All rights reserved.
 
 ## Grant of License
 
 Subject to the payment of the applicable license fee and compliance with the
-terms of this agreement, TRI-SYNC grants you a non-exclusive, non-transferable
+terms of this agreement, TRI SYNC LLC grants you a non-exclusive, non-transferable
 license to:
 
 1. Use the TRI-SYNC software ("the Software") for licensed enterprise features,
@@ -21,20 +21,19 @@ You may **not**:
 1. **Redistribute** the Software or any derivative works without a separate
    written OEM license agreement.
 2. **Sublicense** the Software to third parties.
-3. **Reverse engineer** the Software for competitive purposes.
-4. **Remove or alter** any license notices, copyright notices, or activation
+3. **Remove or alter** any license notices, copyright notices, or activation
    mechanisms in the Software.
-5. **Use enterprise features or the Software in commercial production** without
+4. **Use enterprise features or the Software in commercial production** without
    a valid signed offline license document. Public verification, replay,
    foundational event logging, and local single-tenant workflows remain
    available without a commercial license.
-6. **Share, publish, or transfer** your signed license document(s) to any third
+5. **Share, publish, or transfer** your signed license document(s) to any third
    party.
 
 ## Offline License Activation
 
 Each license includes a signed offline license document. Licenses are tied to the
-purchaser and must not be shared. TRI-SYNC reserves the right to revoke or refuse
+purchaser and must not be shared. TRI SYNC LLC reserves the right to revoke or refuse
 renewal for licenses that have been shared or misused.
 
 The runtime verifies these documents locally using an embedded Ed25519 public
@@ -46,6 +45,16 @@ required for production use.
 Public verification, replay, foundational event logging, and local
 single-tenant workflows are available without a license. A signed evaluation
 license is required only to evaluate restricted enterprise features.
+
+## Reserved Rights
+
+TRI SYNC LLC retains all right, title, and interest in the Software, including
+its source code, object code, and any trade secrets embodied therein, except
+as expressly licensed under this Agreement. No rights are granted by
+implication, estoppel, or otherwise beyond those expressly stated here. The
+TRI-SYNC wire protocol, as defined in SPEC.md and
+docs/cross-language-determinism.md, is separately and explicitly open for
+interoperability purposes as described below.
 
 ## Open Protocol
 
@@ -60,21 +69,21 @@ without a license.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
-TRI-SYNC BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN
+TRI SYNC LLC BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN
 ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Limitation of Liability
 
-TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL TRI-SYNC
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL TRI SYNC LLC
 BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES ARISING OUT OF OR RELATED TO THIS AGREEMENT, EVEN IF TRI-SYNC HAS BEEN
+DAMAGES ARISING OUT OF OR RELATED TO THIS AGREEMENT, EVEN IF TRI SYNC LLC HAS BEEN
 ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
 
 ## Governing Law
 
-This agreement is governed by the laws of the jurisdiction in which TRI-SYNC
-is registered, without regard to conflict-of-law provisions.
+This agreement is governed by the laws of California, United States, without
+regard to conflict-of-law provisions.
 
 ## Contact
 

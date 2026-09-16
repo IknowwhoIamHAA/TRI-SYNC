@@ -15,8 +15,8 @@ All notable changes to this project will be documented in this file.
 - `EventLogBackend` trait for pluggable storage, plus `FileSystemBackend` and
   `InMemoryBackend` reference implementations.
 - Trusted-checkpoint verification with `tri-sync verify --checkpoint-root <digest>`,
-  allowing replay to resume from a verified `TICK_SEAL` snapshot cache instead of
-  always starting from genesis.
+  now loading persisted `StateSnapshot` cache entries (with replay-through-checkpoint
+  fallback when cache is absent, stale, or unreadable/corrupt.
 - `ProtocolViolationError` structured JSON error taxonomy with compliance-oriented
   exit codes for sequence/digest/format failures, namespace breaches, and
   checkpoint/state mismatches.
@@ -33,6 +33,8 @@ All notable changes to this project will be documented in this file.
   namespace, key, value, and digest in aligned columns. Useful for auditing and debugging.
 - `status --log <path>` — Single-line summary of a log: event count, head digest,
   whether the log ends with a `TICK_SEAL`, and whether replay passes.
+- `apply-batch --log <path> --namespace <ns> --input <jsonl>` — appends many
+  `apply`/`delete` operations in one process using backend `append_batch`.
 
 #### Replay Guard
 - Tick regression detection across all event types. If a non-zero `tick` in any event is
@@ -67,6 +69,17 @@ All notable changes to this project will be documented in this file.
 - Additional replay and CLI integration tests cover trusted-checkpoint resume,
   missing checkpoint roots, mixed-namespace JSON errors, and structured
   enterprise-license failures.
+- Added regression coverage for snapshot-cache missing/corrupt/stale fallback,
+  `apply-batch` parity vs sequential `apply`/`delete`, and dedicated
+  `INVALID_NAMESPACE` error code assertions.
+- Latest `cargo test` output: `110` (lib) + `2` (`benchmark_regression`) + `12`
+  (`cli_checkpoint_and_errors`) + `1` (doc-tests) passed.
+- Latest benchmark runs:
+  - `cargo run --example benchmark_ledger --release -- 100000`:
+    `throughput_events_per_sec = 98615.59`
+  - real CLI shell loop (`tri-sync apply` x1000): `449.64 events/sec`
+  - new CLI batch mode (`tri-sync apply-batch` x1000 ops): `32160.76 events/sec`
+    (`71.53x` faster than shell-style repeated invocation on the same host run)
 
 ### Changed
 - `Cargo.toml`: crate/package version bumped to **1.3.0** while preserving the frozen
@@ -90,7 +103,7 @@ All notable changes to this project will be documented in this file.
 - Wire format: **unchanged**. All v1.0.0 encoded logs are fully replayable by v1.1.0.
 - `BinaryStateMap::from_binary` / `to_binary`: byte-identical to v1.0.0.
 - All existing CLI subcommands (`apply`, `delete`, `replay`, `verify`, `export`, `digest`,
-  `example`) are unchanged.
+  `example`) are unchanged; `apply-batch` is additive.
 
 ### Retired release lines
 - Pre-1.0 experimental snapshots (`v0.1.x`, `v0.2.x`, and related serverless/cloud-assisted iterations) are deprecated for production use and retained only for repository history.
