@@ -341,7 +341,9 @@ mod tests {
         )
         .expect("second event");
 
-        backend.append_batch(&[first.clone(), second.clone()]).expect("append batch");
+        backend
+            .append_batch(&[first.clone(), second.clone()])
+            .expect("append batch");
 
         let events = backend.load().expect("load");
         assert_eq!(events, vec![first, second]);
