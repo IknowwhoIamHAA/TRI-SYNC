@@ -7,7 +7,7 @@ use tri_sync::digest::sha256_hex;
 use tri_sync::error::ProtocolViolationError;
 use tri_sync::event::Event;
 use tri_sync::license;
-use tri_sync::replay::{ReplayEngine, verify_events};
+use tri_sync::replay::{ReplayEngine, verify_events_with_snapshot};
 use tri_sync::state_map::BsmValue;
 
 #[derive(Parser)]
@@ -228,7 +228,16 @@ fn run() -> Result<(), CliError> {
         } => {
             let backend = FileSystemBackend::open(log.clone());
             let events = backend.load()?;
-            let outcome = verify_events(&events, checkpoint_root.as_deref())?;
+            let cached_snapshot = if let Some(root) = checkpoint_root.as_deref() {
+                backend.load_snapshot_for_root(root)?
+            } else {
+                None
+            };
+            let outcome = verify_events_with_snapshot(
+                &events,
+                checkpoint_root.as_deref(),
+                cached_snapshot,
+            )?;
 
             println!("OK");
             println!("log={}", log.display());

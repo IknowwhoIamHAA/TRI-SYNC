@@ -19,8 +19,8 @@
      resume from a trusted `TICK_SEAL` snapshot checkpoint.
 4. **CLI Layer** — Developer interface for running, inspecting, replaying.
    - `apply` and `delete` subcommands accept a `--tick` flag (default `0`).
-   - `verify --checkpoint-root <digest>` currently performs a two-phase in-memory replay:
-     replay through the trusted checkpoint, then verify only the suffix against that state.
+   - `verify --checkpoint-root <digest>` loads a persisted `StateSnapshot` cache from
+     `<log>.snapshots/` when present, and falls back to replay-through-checkpoint otherwise.
    - Protocol violations are emitted as structured JSON for compliance monitoring.
 
 ## Data Flow

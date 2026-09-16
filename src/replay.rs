@@ -464,6 +464,14 @@ pub fn verify_events(
     events: &[Event],
     checkpoint_root: Option<&str>,
 ) -> Result<VerifyOutcome, ProtocolViolationError> {
+    verify_events_with_snapshot(events, checkpoint_root, None)
+}
+
+pub fn verify_events_with_snapshot(
+    events: &[Event],
+    checkpoint_root: Option<&str>,
+    cached_snapshot: Option<StateSnapshot>,
+) -> Result<VerifyOutcome, ProtocolViolationError> {
     if let Some(root) = checkpoint_root {
         let matches: Vec<usize> = events
             .iter()
@@ -496,22 +504,14 @@ pub fn verify_events(
 
         let checkpoint_index = matches[0];
         let checkpoint_event = &events[checkpoint_index];
-        let checkpoint_state = ReplayEngine::replay(&events[..=checkpoint_index])?;
-        let seal_timestamp_ms = checkpoint_event.timestamp_ms.ok_or_else(|| {
-            ProtocolViolationError::invalid_event_format(
-                Some(checkpoint_event.seq),
-                "TICK_SEAL missing timestamp_ms",
-            )
-        })?;
-
-        let snapshot = StateSnapshot {
-            namespace: checkpoint_event.namespace.clone(),
-            tick: checkpoint_event.tick,
-            seal_seq: checkpoint_event.seq,
-            seal_timestamp_ms,
-            root_digest: decode_array_32(root)?,
-            seal_digest: decode_array_32(&checkpoint_event.digest)?,
-            state: checkpoint_state,
+        let snapshot = if let Some(snapshot) = cached_snapshot {
+            if snapshot_matches_checkpoint(&snapshot, checkpoint_event, root) {
+                snapshot
+            } else {
+                rebuild_snapshot(events, checkpoint_index, checkpoint_event, root)?
+            }
+        } else {
+            rebuild_snapshot(events, checkpoint_index, checkpoint_event, root)?
         };
 
         let tail = &events[checkpoint_index + 1..];
@@ -531,6 +531,40 @@ pub fn verify_events(
         checkpoint_root: None,
         verified_events: None,
     })
+}
+
+fn rebuild_snapshot(
+    events: &[Event],
+    checkpoint_index: usize,
+    checkpoint_event: &Event,
+    root: &str,
+) -> Result<StateSnapshot, ProtocolViolationError> {
+    let checkpoint_state = ReplayEngine::replay(&events[..=checkpoint_index])?;
+    let seal_timestamp_ms = checkpoint_event.timestamp_ms.ok_or_else(|| {
+        ProtocolViolationError::invalid_event_format(
+            Some(checkpoint_event.seq),
+            "TICK_SEAL missing timestamp_ms",
+        )
+    })?;
+
+    Ok(StateSnapshot {
+        namespace: checkpoint_event.namespace.clone(),
+        tick: checkpoint_event.tick,
+        seal_seq: checkpoint_event.seq,
+        seal_timestamp_ms,
+        root_digest: decode_array_32(root)?,
+        seal_digest: decode_array_32(&checkpoint_event.digest)?,
+        state: checkpoint_state,
+    })
+}
+
+fn snapshot_matches_checkpoint(snapshot: &StateSnapshot, checkpoint_event: &Event, root: &str) -> bool {
+    snapshot.namespace == checkpoint_event.namespace
+        && snapshot.tick == checkpoint_event.tick
+        && snapshot.seal_seq == checkpoint_event.seq
+        && snapshot.seal_timestamp_ms == checkpoint_event.timestamp_ms.unwrap_or_default()
+        && encode_hex(&snapshot.root_digest) == root
+        && encode_hex(&snapshot.seal_digest) == checkpoint_event.digest
 }
 
 fn decode_array_32(value: &str) -> Result<[u8; 32], ProtocolViolationError> {

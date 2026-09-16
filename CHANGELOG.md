@@ -15,7 +15,8 @@ All notable changes to this project will be documented in this file.
 - `EventLogBackend` trait for pluggable storage, plus `FileSystemBackend` and
   `InMemoryBackend` reference implementations.
 - Trusted-checkpoint verification with `tri-sync verify --checkpoint-root <digest>`,
-  implemented as replay-to-checkpoint plus replay-of-tail in memory.
+  now loading persisted `StateSnapshot` cache entries (with replay-through-checkpoint
+  fallback when cache is absent).
 - `ProtocolViolationError` structured JSON error taxonomy with compliance-oriented
   exit codes for sequence/digest/format failures, namespace breaches, and
   checkpoint/state mismatches.

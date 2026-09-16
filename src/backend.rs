@@ -37,6 +37,7 @@ use std::sync::Mutex;
 use crate::error::ProtocolViolationError;
 use crate::event::{Event, ZERO_DIGEST_HEX};
 use crate::event_log::{AppendOnlyEventLog, SegmentHeader};
+use crate::state_map::StateSnapshot;
 
 /// Storage abstraction for event-log persistence.
 ///
@@ -85,19 +86,24 @@ impl FileSystemBackend {
             .tail_metadata()
             .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
     }
+
+    pub fn load_snapshot_for_root(
+        &self,
+        checkpoint_root: &str,
+    ) -> Result<Option<StateSnapshot>, ProtocolViolationError> {
+        self.inner
+            .load_snapshot_for_root(checkpoint_root)
+            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
+    }
 }
 
 impl EventLogBackend for FileSystemBackend {
     fn append(&self, event: &Event) -> Result<(), ProtocolViolationError> {
-        self.inner
-            .append(event)
-            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
+        self.inner.append(event)
     }
 
     fn append_batch(&self, events: &[Event]) -> Result<(), ProtocolViolationError> {
-        self.inner
-            .append_batch(events)
-            .map_err(|err| ProtocolViolationError::from_message(err.to_string()))
+        self.inner.append_batch(events)
     }
 
     fn load(&self) -> Result<Vec<Event>, ProtocolViolationError> {

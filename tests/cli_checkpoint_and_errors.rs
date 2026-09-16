@@ -344,6 +344,90 @@ fn verify_checkpoint_root_rejects_ambiguous_lineage() {
 }
 
 #[test]
+fn verify_with_checkpoint_root_uses_persisted_snapshot_cache() {
+    let temp = tempdir().expect("tempdir");
+    let log_path = temp.path().join("events.jsonl");
+    let backend = FileSystemBackend::open(&log_path);
+
+    let first = Event::state_write(
+        0,
+        1,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(1),
+        false,
+        tri_sync::event::ZERO_DIGEST_HEX,
+        None,
+    )
+    .expect("first");
+    backend.append(&first).expect("append first");
+
+    let mut checkpoint_state = tri_sync::state_map::BinaryStateMap::new();
+    checkpoint_state
+        .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+        .expect("set");
+    let checkpoint_root = checkpoint_state.root_digest_hex().expect("checkpoint root");
+    let seal = Event::tick_seal(
+        1,
+        1,
+        "tenant-a",
+        1,
+        checkpoint_root.clone(),
+        first.digest.clone(),
+        10,
+    )
+    .expect("seal");
+    backend.append(&seal).expect("append seal");
+
+    let second = Event::state_write(
+        2,
+        2,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(2),
+        false,
+        seal.digest.clone(),
+        None,
+    )
+    .expect("second");
+    backend.append(&second).expect("append second");
+
+    let segments_dir = std::path::PathBuf::from(format!("{}.segments", log_path.display()));
+    let segment_path = fs::read_dir(&segments_dir)
+        .expect("segments dir")
+        .next()
+        .expect("segment entry")
+        .expect("dir entry")
+        .path();
+    let lines: Vec<String> = fs::read_to_string(&segment_path)
+        .expect("segment contents")
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert!(lines.len() >= 4, "unexpected segment format");
+    let mut mutated = Vec::new();
+    mutated.push(lines[0].clone());
+    mutated.extend(lines.iter().skip(2).cloned());
+    fs::write(&segment_path, format!("{}\n", mutated.join("\n"))).expect("rewrite segment");
+
+    let output = Command::new(tri_sync_bin())
+        .args(["verify", "--log"])
+        .arg(&log_path)
+        .args(["--checkpoint-root", &checkpoint_root])
+        .output()
+        .expect("run checkpoint verify");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("checkpoint_root="));
+    assert!(stdout.contains("verified_events=1"), "stdout: {stdout}");
+}
+
+#[test]
 fn enterprise_gated_command_without_license_emits_json_error() {
     let temp = tempdir().expect("tempdir");
     let log_path = temp.path().join("events.jsonl");
