@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -152,6 +152,19 @@ impl AppendOnlyEventLog {
     }
 
     pub fn append(&self, event: &Event) -> Result<(), Box<dyn Error>> {
+        self.append_batch(std::slice::from_ref(event))
+    }
+
+    /// Append a batch of events while holding the filesystem lock once.
+    ///
+    /// Durability boundary: segment lines are flushed before the catalog write.
+    /// If the process exits before catalog persistence, `read_catalog_reconciled`
+    /// recovers tail metadata from the active segment on next open.
+    pub fn append_batch(&self, events: &[Event]) -> Result<(), Box<dyn Error>> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
         let lock_path = self.lock_path();
         let lock_file = OpenOptions::new()
             .create(true)
@@ -159,7 +172,7 @@ impl AppendOnlyEventLog {
             .write(true)
             .open(&lock_path)?;
         lock_file.lock_exclusive()?;
-        let result = self.append_under_lock(event);
+        let result = self.append_batch_under_lock(events);
         drop(lock_file);
         result
     }
@@ -240,74 +253,109 @@ impl AppendOnlyEventLog {
         })
     }
 
-    fn append_under_lock(&self, event: &Event) -> Result<(), Box<dyn Error>> {
+    fn append_batch_under_lock(&self, events: &[Event]) -> Result<(), Box<dyn Error>> {
         if self.catalog_path().exists() {
-            return self.append_segmented_under_lock(event);
+            return self.append_segmented_under_lock(events);
         }
 
         if self.path.exists() && self.path.metadata()?.len() > 0 {
             self.migrate_legacy_log_under_lock()?;
-            return self.append_segmented_under_lock(event);
+            return self.append_segmented_under_lock(events);
         }
 
-        self.append_segmented_under_lock(event)
+        self.append_segmented_under_lock(events)
     }
 
-    fn append_segmented_under_lock(&self, event: &Event) -> Result<(), Box<dyn Error>> {
+    fn append_segmented_under_lock(&self, events: &[Event]) -> Result<(), Box<dyn Error>> {
         let mut catalog = self.read_catalog_reconciled_optional()?.unwrap_or_else(|| {
             SegmentCatalog::new(self.max_events_per_segment, self.max_bytes_per_segment)
         });
-
-        let expected_seq = catalog.next_seq;
-        if event.seq != expected_seq {
-            return Err(if event.seq < expected_seq {
-                format!(
-                    "SEQUENCE_COLLISION: namespace {} already contains seq {}",
-                    event.namespace, event.seq
-                )
-                .into()
-            } else {
-                format!("SEQ_GAP: expected seq {}, got {}", expected_seq, event.seq).into()
-            });
-        }
-
-        event.validate_prev_digest(&catalog.head_digest)?;
-        event.validate_digest()?;
-
-        if let Some(namespace) = &catalog.namespace {
-            if namespace != &event.namespace {
-                return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
-            }
-        }
-
-        let line = to_canonical_string(&serde_json::to_value(event)?)?;
-        let line_len = line.len() as u64 + 1;
         self.ensure_segment_storage()?;
-        self.roll_segment_if_needed(&mut catalog, line_len, event)?;
+        let mut open_segment_name: Option<String> = None;
+        let mut writer: Option<BufWriter<File>> = None;
+        let mut catalog_dirty = false;
 
-        let active_segment = catalog
-            .active_segment_mut()
-            .ok_or("INVALID_SEGMENT: missing active segment after initialization")?;
-        let segment_path = self.segment_path(&active_segment.file_name);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&segment_path)?;
-        writeln!(file, "{line}")?;
-        drop(file);
+        for event in events {
+            let expected_seq = catalog.next_seq;
+            if event.seq != expected_seq {
+                return Err(if event.seq < expected_seq {
+                    format!(
+                        "SEQUENCE_COLLISION: namespace {} already contains seq {}",
+                        event.namespace, event.seq
+                    )
+                    .into()
+                } else {
+                    format!("SEQ_GAP: expected seq {}, got {}", expected_seq, event.seq).into()
+                });
+            }
 
-        active_segment.seq_end = event.seq;
-        active_segment.last_digest = event.digest.clone();
-        active_segment.event_count += 1;
-        active_segment.size_bytes += line_len;
+            event.validate_prev_digest(&catalog.head_digest)?;
+            event.validate_digest()?;
 
-        if catalog.namespace.is_none() {
-            catalog.namespace = Some(event.namespace.clone());
+            if let Some(namespace) = &catalog.namespace {
+                if namespace != &event.namespace {
+                    return Err("NAMESPACE_LEAK: mixed namespaces in one log file".into());
+                }
+            }
+
+            let line = to_canonical_string(&serde_json::to_value(event)?)?;
+            let line_len = line.len() as u64 + 1;
+            let previous_active = catalog.active_segment_id.clone();
+            self.roll_segment_if_needed(&mut catalog, line_len, event)?;
+            if catalog.active_segment_id != previous_active {
+                if let Some(writer) = writer.as_mut() {
+                    writer.flush()?;
+                }
+                writer = None;
+                open_segment_name = None;
+                self.write_catalog(&catalog)?;
+            }
+
+            let file_name = catalog
+                .active_segment()
+                .ok_or("INVALID_SEGMENT: missing active segment after initialization")?
+                .file_name
+                .clone();
+            if open_segment_name.as_deref() != Some(file_name.as_str()) {
+                if let Some(writer) = writer.as_mut() {
+                    writer.flush()?;
+                }
+                let segment_path = self.segment_path(&file_name);
+                let file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&segment_path)?;
+                writer = Some(BufWriter::new(file));
+                open_segment_name = Some(file_name.clone());
+            }
+
+            let active_writer = writer
+                .as_mut()
+                .ok_or("INVALID_SEGMENT: active segment writer unavailable")?;
+            writeln!(active_writer, "{line}")?;
+
+            let active_segment = catalog
+                .active_segment_mut()
+                .ok_or("INVALID_SEGMENT: missing active segment after initialization")?;
+            active_segment.seq_end = event.seq;
+            active_segment.last_digest = event.digest.clone();
+            active_segment.event_count += 1;
+            active_segment.size_bytes += line_len;
+
+            if catalog.namespace.is_none() {
+                catalog.namespace = Some(event.namespace.clone());
+            }
+            catalog.next_seq = event.seq + 1;
+            catalog.head_digest = event.digest.clone();
+            catalog_dirty = true;
         }
-        catalog.next_seq = event.seq + 1;
-        catalog.head_digest = event.digest.clone();
 
-        self.write_catalog(&catalog)?;
+        if let Some(writer) = writer.as_mut() {
+            writer.flush()?;
+        }
+        if catalog_dirty {
+            self.write_catalog(&catalog)?;
+        }
         Ok(())
     }
 
@@ -787,6 +835,57 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("lock"));
         let _ = fs::remove_file(PathBuf::from(format!("{}.catalog.json", path.display())));
+    }
+
+    #[test]
+    fn append_batch_appends_multiple_events_under_single_catalog_flush() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("current time should be later than epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tri-sync-batch-{unique}.jsonl"));
+        let log = AppendOnlyEventLog::open(&path);
+
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("first");
+        let second = Event::state_write(
+            1,
+            1,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(2),
+            false,
+            first.digest.clone(),
+            None,
+        )
+        .expect("second");
+        let third = Event::state_delete(
+            2,
+            1,
+            "tenant-a",
+            "tenant-a:key",
+            None,
+            true,
+            second.digest.clone(),
+        )
+        .expect("third");
+
+        log.append_batch(&[first.clone(), second.clone(), third.clone()])
+            .expect("append batch");
+
+        let loaded = log.load().expect("load");
+        assert_eq!(loaded, vec![first, second, third]);
+        let tail = log.tail_metadata().expect("tail");
+        assert_eq!(tail.next_seq, 3);
     }
 
     #[test]

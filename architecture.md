@@ -12,6 +12,8 @@
    - `FileSystemBackend` — wraps `AppendOnlyEventLog`, acquires an exclusive OS-level
      lock on a `.lock` sidecar before each append, and updates `SegmentHeader.seq_end`
      atomically via `.tmp` + `rename`.
+   - Batched appends hold the lock once, stream event lines to the active segment, and
+     persist catalog metadata as the batch durability boundary.
    - `InMemoryBackend` — test/iteration backend with no filesystem dependency.
    - `ReplayEngine` — pure protocol logic over event slices; can replay from genesis or
      resume from a trusted `TICK_SEAL` snapshot checkpoint.

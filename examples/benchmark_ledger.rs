@@ -49,6 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let namespace = "bench-tenant";
     let mut prev_digest = ZERO_DIGEST_HEX.to_string();
+    let mut batch = Vec::with_capacity(event_count);
 
     let ingest_start = Instant::now();
     for seq in 0..event_count {
@@ -67,8 +68,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map_err(io::Error::other)?;
 
         prev_digest = event.digest.clone();
-        backend.append(&event)?;
+        batch.push(event);
     }
+    backend.append_batch(&batch)?;
     let ingest_elapsed = ingest_start.elapsed();
 
     let load_start = Instant::now();

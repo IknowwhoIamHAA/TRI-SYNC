@@ -216,6 +216,8 @@ impl EventLogBackend for CustomBackend {
 }
 ```
 
+Batch ingestion is available through `append_batch(&[Event])`. For the filesystem backend, TRI-SYNC holds the lock once, streams all batch events, flushes segment lines, and then persists catalog metadata at the end of the batch.
+
 Checkpoint-root verification is currently implemented as a two-phase replay in memory: TRI-SYNC replays from genesis through the matching `TICK_SEAL` to reconstruct the checkpoint state, then replays the remaining tail against that state.
 
 ---
