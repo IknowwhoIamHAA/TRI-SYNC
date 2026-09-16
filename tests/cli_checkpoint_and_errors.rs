@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tempfile::tempdir;
@@ -9,6 +10,11 @@ use tri_sync::state_map::BsmValue;
 
 fn tri_sync_bin() -> &'static str {
     env!("CARGO_BIN_EXE_tri-sync")
+}
+
+fn snapshot_cache_path(log_path: &Path, checkpoint_root: &str) -> PathBuf {
+    PathBuf::from(format!("{}.snapshots", log_path.display()))
+        .join(format!("{checkpoint_root}.snapshot.bin"))
 }
 
 #[test]
@@ -428,6 +434,226 @@ fn verify_with_checkpoint_root_uses_persisted_snapshot_cache() {
 }
 
 #[test]
+fn verify_with_checkpoint_root_falls_back_when_snapshot_cache_missing() {
+    let temp = tempdir().expect("tempdir");
+    let log_path = temp.path().join("events.jsonl");
+    let backend = FileSystemBackend::open(&log_path);
+
+    let first = Event::state_write(
+        0,
+        1,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(1),
+        false,
+        tri_sync::event::ZERO_DIGEST_HEX,
+        None,
+    )
+    .expect("first");
+    backend.append(&first).expect("append first");
+
+    let mut checkpoint_state = tri_sync::state_map::BinaryStateMap::new();
+    checkpoint_state
+        .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+        .expect("set");
+    let checkpoint_root = checkpoint_state.root_digest_hex().expect("checkpoint root");
+    let seal = Event::tick_seal(
+        1,
+        1,
+        "tenant-a",
+        1,
+        checkpoint_root.clone(),
+        first.digest.clone(),
+        10,
+    )
+    .expect("seal");
+    backend.append(&seal).expect("append seal");
+
+    let second = Event::state_write(
+        2,
+        2,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(2),
+        false,
+        seal.digest.clone(),
+        None,
+    )
+    .expect("second");
+    backend.append(&second).expect("append second");
+
+    let cache_path = snapshot_cache_path(&log_path, &checkpoint_root);
+    fs::remove_file(&cache_path).expect("remove snapshot cache");
+
+    let output = Command::new(tri_sync_bin())
+        .args(["verify", "--log"])
+        .arg(&log_path)
+        .args(["--checkpoint-root", &checkpoint_root])
+        .output()
+        .expect("run checkpoint verify");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("verified_events=1"), "stdout: {stdout}");
+}
+
+#[test]
+fn verify_with_checkpoint_root_falls_back_when_snapshot_cache_corrupt() {
+    let temp = tempdir().expect("tempdir");
+    let log_path = temp.path().join("events.jsonl");
+    let backend = FileSystemBackend::open(&log_path);
+
+    let first = Event::state_write(
+        0,
+        1,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(1),
+        false,
+        tri_sync::event::ZERO_DIGEST_HEX,
+        None,
+    )
+    .expect("first");
+    backend.append(&first).expect("append first");
+
+    let mut checkpoint_state = tri_sync::state_map::BinaryStateMap::new();
+    checkpoint_state
+        .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+        .expect("set");
+    let checkpoint_root = checkpoint_state.root_digest_hex().expect("checkpoint root");
+    let seal = Event::tick_seal(
+        1,
+        1,
+        "tenant-a",
+        1,
+        checkpoint_root.clone(),
+        first.digest.clone(),
+        10,
+    )
+    .expect("seal");
+    backend.append(&seal).expect("append seal");
+
+    let second = Event::state_write(
+        2,
+        2,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(2),
+        false,
+        seal.digest.clone(),
+        None,
+    )
+    .expect("second");
+    backend.append(&second).expect("append second");
+
+    let cache_path = snapshot_cache_path(&log_path, &checkpoint_root);
+    fs::write(&cache_path, [0x00, 0xFF, 0x12, 0x34]).expect("corrupt snapshot cache");
+
+    let output = Command::new(tri_sync_bin())
+        .args(["verify", "--log"])
+        .arg(&log_path)
+        .args(["--checkpoint-root", &checkpoint_root])
+        .output()
+        .expect("run checkpoint verify");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("verified_events=1"), "stdout: {stdout}");
+}
+
+#[test]
+fn verify_with_checkpoint_root_rebuilds_when_snapshot_cache_stale() {
+    let temp = tempdir().expect("tempdir");
+    let log_path = temp.path().join("events.jsonl");
+    let backend = FileSystemBackend::open(&log_path);
+
+    let first = Event::state_write(
+        0,
+        1,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(1),
+        false,
+        tri_sync::event::ZERO_DIGEST_HEX,
+        None,
+    )
+    .expect("first");
+    backend.append(&first).expect("append first");
+
+    let mut state1 = tri_sync::state_map::BinaryStateMap::new();
+    state1
+        .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+        .expect("set");
+    let checkpoint_root_one = state1.root_digest_hex().expect("checkpoint root one");
+    let seal_one = Event::tick_seal(
+        1,
+        1,
+        "tenant-a",
+        1,
+        checkpoint_root_one.clone(),
+        first.digest.clone(),
+        10,
+    )
+    .expect("seal one");
+    backend.append(&seal_one).expect("append seal one");
+
+    let second = Event::state_write(
+        2,
+        2,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(2),
+        false,
+        seal_one.digest.clone(),
+        None,
+    )
+    .expect("second");
+    backend.append(&second).expect("append second");
+
+    let mut state2 = tri_sync::state_map::BinaryStateMap::new();
+    state2
+        .set("tenant-a", "tenant-a:key", BsmValue::Integer(2))
+        .expect("set");
+    let checkpoint_root_two = state2.root_digest_hex().expect("checkpoint root two");
+    let seal_two = Event::tick_seal(
+        3,
+        2,
+        "tenant-a",
+        3,
+        checkpoint_root_two.clone(),
+        second.digest.clone(),
+        20,
+    )
+    .expect("seal two");
+    backend.append(&seal_two).expect("append seal two");
+
+    let snapshot_one = snapshot_cache_path(&log_path, &checkpoint_root_one);
+    let snapshot_two = snapshot_cache_path(&log_path, &checkpoint_root_two);
+    let snapshot_two_bytes = fs::read(&snapshot_two).expect("read second snapshot");
+    fs::write(&snapshot_one, snapshot_two_bytes).expect("overwrite stale snapshot");
+
+    let output = Command::new(tri_sync_bin())
+        .args(["verify", "--log"])
+        .arg(&log_path)
+        .args(["--checkpoint-root", &checkpoint_root_one])
+        .output()
+        .expect("run checkpoint verify");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("verified_events=2"), "stdout: {stdout}");
+}
+
+#[test]
 fn enterprise_gated_command_without_license_emits_json_error() {
     let temp = tempdir().expect("tempdir");
     let log_path = temp.path().join("events.jsonl");
@@ -472,10 +698,128 @@ fn apply_rejects_reserved_system_namespace() {
     assert!(!output.status.success(), "apply unexpectedly succeeded");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     let json: serde_json::Value = serde_json::from_str(stderr.trim()).expect("json stderr");
-    assert_eq!(json["code"], "INVALID_EVENT_FORMAT");
+    assert_eq!(json["code"], "INVALID_NAMESPACE");
     let message = json["message"].as_str().expect("message string");
     assert!(
         message.contains("INVALID_NAMESPACE"),
         "unexpected message: {message}"
     );
+}
+
+#[test]
+fn apply_batch_matches_sequential_apply_delete_parity() {
+    let temp = tempdir().expect("tempdir");
+    let batch_log = temp.path().join("batch-events.jsonl");
+    let sequential_log = temp.path().join("sequential-events.jsonl");
+    let ops_path = temp.path().join("ops.jsonl");
+
+    fs::write(
+        &ops_path,
+        [
+            r#"{"op":"apply","key":"job-status","value":"running","tick":1}"#,
+            r#"{"op":"apply","key":"job-status","value":"done","tick":2}"#,
+            r#"{"op":"delete","key":"job-status","tick":3}"#,
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .expect("write batch ops");
+
+    let batch_output = Command::new(tri_sync_bin())
+        .args([
+            "apply-batch",
+            "--log",
+            batch_log.to_str().expect("batch log path"),
+            "--namespace",
+            "tenant-a",
+            "--input",
+            ops_path.to_str().expect("ops path"),
+        ])
+        .output()
+        .expect("run apply-batch");
+    assert!(
+        batch_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&batch_output.stderr)
+    );
+
+    for (tick, value) in [("1", "running"), ("2", "done")] {
+        let output = Command::new(tri_sync_bin())
+            .args([
+                "apply",
+                "--log",
+                sequential_log.to_str().expect("sequential log path"),
+                "--namespace",
+                "tenant-a",
+                "--key",
+                "job-status",
+                "--value",
+                value,
+                "--tick",
+                tick,
+            ])
+            .output()
+            .expect("run apply");
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let delete_output = Command::new(tri_sync_bin())
+        .args([
+            "delete",
+            "--log",
+            sequential_log.to_str().expect("sequential log path"),
+            "--namespace",
+            "tenant-a",
+            "--key",
+            "job-status",
+            "--tick",
+            "3",
+        ])
+        .output()
+        .expect("run delete");
+    assert!(
+        delete_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&delete_output.stderr)
+    );
+
+    let verify_batch = Command::new(tri_sync_bin())
+        .args(["verify", "--log"])
+        .arg(&batch_log)
+        .output()
+        .expect("verify batch log");
+    assert!(
+        verify_batch.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&verify_batch.stderr)
+    );
+
+    let verify_sequential = Command::new(tri_sync_bin())
+        .args(["verify", "--log"])
+        .arg(&sequential_log)
+        .output()
+        .expect("verify sequential log");
+    assert!(
+        verify_sequential.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&verify_sequential.stderr)
+    );
+
+    let batch_stdout = String::from_utf8(verify_batch.stdout).expect("batch stdout");
+    let sequential_stdout = String::from_utf8(verify_sequential.stdout).expect("sequential stdout");
+    assert_eq!(
+        extract_field(&batch_stdout, "root_digest"),
+        extract_field(&sequential_stdout, "root_digest")
+    );
+}
+
+fn extract_field<'a>(output: &'a str, key: &str) -> &'a str {
+    output
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}=")))
+        .expect("field missing")
 }
