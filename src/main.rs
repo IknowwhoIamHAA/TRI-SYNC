@@ -233,11 +233,8 @@ fn run() -> Result<(), CliError> {
             } else {
                 None
             };
-            let outcome = verify_events_with_snapshot(
-                &events,
-                checkpoint_root.as_deref(),
-                cached_snapshot,
-            )?;
+            let outcome =
+                verify_events_with_snapshot(&events, checkpoint_root.as_deref(), cached_snapshot)?;
 
             println!("OK");
             println!("log={}", log.display());

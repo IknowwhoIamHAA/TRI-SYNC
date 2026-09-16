@@ -286,9 +286,17 @@ impl AppendOnlyEventLog {
             return self.append_segmented_under_lock(events);
         }
 
-        if self.path.exists() && self.path.metadata().map_err(ProtocolViolationError::from)?.len() > 0 {
-            self.migrate_legacy_log_under_lock()
-                .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
+        if self.path.exists()
+            && self
+                .path
+                .metadata()
+                .map_err(ProtocolViolationError::from)?
+                .len()
+                > 0
+        {
+            self.migrate_legacy_log_under_lock().map_err(|err| {
+                ProtocolViolationError::invalid_event_format(None, err.to_string())
+            })?;
             return self.append_segmented_under_lock(events);
         }
 
@@ -303,8 +311,8 @@ impl AppendOnlyEventLog {
             .read_catalog_reconciled_optional()
             .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?
             .unwrap_or_else(|| {
-            SegmentCatalog::new(self.max_events_per_segment, self.max_bytes_per_segment)
-        });
+                SegmentCatalog::new(self.max_events_per_segment, self.max_bytes_per_segment)
+            });
         self.ensure_segment_storage()
             .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
         let mut open_segment_name: Option<String> = None;
@@ -350,19 +358,24 @@ impl AppendOnlyEventLog {
                 }
             }
 
-            let line = to_canonical_string(&serde_json::to_value(event).map_err(ProtocolViolationError::from)?)?;
+            let line = to_canonical_string(
+                &serde_json::to_value(event).map_err(ProtocolViolationError::from)?,
+            )?;
             let line_len = line.len() as u64 + 1;
             let previous_active = catalog.active_segment_id.clone();
             self.roll_segment_if_needed(&mut catalog, line_len, event)
-                .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
+                .map_err(|err| {
+                    ProtocolViolationError::invalid_event_format(None, err.to_string())
+                })?;
             if catalog.active_segment_id != previous_active {
                 if let Some(writer) = writer.as_mut() {
                     writer.flush().map_err(ProtocolViolationError::from)?;
                 }
                 writer = None;
                 open_segment_name = None;
-                self.write_catalog(&catalog)
-                    .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
+                self.write_catalog(&catalog).map_err(|err| {
+                    ProtocolViolationError::invalid_event_format(None, err.to_string())
+                })?;
             }
 
             let file_name = catalog
@@ -389,24 +402,20 @@ impl AppendOnlyEventLog {
                 open_segment_name = Some(file_name.clone());
             }
 
-            let active_writer = writer
-                .as_mut()
-                .ok_or_else(|| {
-                    ProtocolViolationError::invalid_event_format(
-                        None,
-                        "INVALID_SEGMENT: active segment writer unavailable",
-                    )
-                })?;
+            let active_writer = writer.as_mut().ok_or_else(|| {
+                ProtocolViolationError::invalid_event_format(
+                    None,
+                    "INVALID_SEGMENT: active segment writer unavailable",
+                )
+            })?;
             writeln!(active_writer, "{line}").map_err(ProtocolViolationError::from)?;
 
-            let active_segment = catalog
-                .active_segment_mut()
-                .ok_or_else(|| {
-                    ProtocolViolationError::invalid_event_format(
-                        None,
-                        "INVALID_SEGMENT: missing active segment after initialization",
-                    )
-                })?;
+            let active_segment = catalog.active_segment_mut().ok_or_else(|| {
+                ProtocolViolationError::invalid_event_format(
+                    None,
+                    "INVALID_SEGMENT: missing active segment after initialization",
+                )
+            })?;
             active_segment.seq_end = event.seq;
             active_segment.last_digest = event.digest.clone();
             active_segment.event_count += 1;
@@ -430,20 +439,22 @@ impl AppendOnlyEventLog {
             writer.flush().map_err(ProtocolViolationError::from)?;
         }
         if catalog_dirty {
-            self.write_catalog(&catalog)
-                .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
+            self.write_catalog(&catalog).map_err(|err| {
+                ProtocolViolationError::invalid_event_format(None, err.to_string())
+            })?;
         }
         Ok(sealed_roots)
     }
 
-    fn persist_snapshot_for_root(&self, checkpoint_root: &str) -> Result<(), ProtocolViolationError> {
+    fn persist_snapshot_for_root(
+        &self,
+        checkpoint_root: &str,
+    ) -> Result<(), ProtocolViolationError> {
         let events = self
             .load()
             .map_err(|err| ProtocolViolationError::invalid_event_format(None, err.to_string()))?;
-        let Some((checkpoint_index, checkpoint_event)) = events
-            .iter()
-            .enumerate()
-            .find(|(_, event)| {
+        let Some((checkpoint_index, checkpoint_event)) =
+            events.iter().enumerate().find(|(_, event)| {
                 event.event_type == EventType::TickSeal
                     && event.root_digest.as_deref() == Some(checkpoint_root)
             })
@@ -460,8 +471,8 @@ impl AppendOnlyEventLog {
         })?;
         let root_bytes =
             decode_array_32(checkpoint_root).map_err(ProtocolViolationError::from_message)?;
-        let seal_bytes =
-            decode_array_32(&checkpoint_event.digest).map_err(ProtocolViolationError::from_message)?;
+        let seal_bytes = decode_array_32(&checkpoint_event.digest)
+            .map_err(ProtocolViolationError::from_message)?;
         let snapshot = StateSnapshot {
             namespace: checkpoint_event.namespace.clone(),
             tick: checkpoint_event.tick,
@@ -472,7 +483,9 @@ impl AppendOnlyEventLog {
             state: checkpoint_state,
         };
 
-        let encoded = snapshot.to_binary().map_err(ProtocolViolationError::from_message)?;
+        let encoded = snapshot
+            .to_binary()
+            .map_err(ProtocolViolationError::from_message)?;
         std::fs::create_dir_all(self.snapshots_dir()).map_err(ProtocolViolationError::from)?;
         std::fs::write(self.snapshot_path_for_root(checkpoint_root), encoded)
             .map_err(ProtocolViolationError::from)?;
@@ -1051,8 +1064,16 @@ mod tests {
             .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
             .expect("set");
         let root = state.root_digest_hex().expect("root");
-        let seal = Event::tick_seal(1, 1, "tenant-a", 1, root.clone(), first.digest.clone(), 1_000)
-            .expect("seal");
+        let seal = Event::tick_seal(
+            1,
+            1,
+            "tenant-a",
+            1,
+            root.clone(),
+            first.digest.clone(),
+            1_000,
+        )
+        .expect("seal");
         log.append(&seal).expect("append seal");
 
         let snapshot = log

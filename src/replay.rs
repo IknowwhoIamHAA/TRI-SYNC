@@ -558,7 +558,11 @@ fn rebuild_snapshot(
     })
 }
 
-fn snapshot_matches_checkpoint(snapshot: &StateSnapshot, checkpoint_event: &Event, root: &str) -> bool {
+fn snapshot_matches_checkpoint(
+    snapshot: &StateSnapshot,
+    checkpoint_event: &Event,
+    root: &str,
+) -> bool {
     snapshot.namespace == checkpoint_event.namespace
         && snapshot.tick == checkpoint_event.tick
         && snapshot.seal_seq == checkpoint_event.seq
