@@ -262,13 +262,12 @@ fn run() -> Result<(), CliError> {
 
             let backend = FileSystemBackend::open(log.clone());
             let tail = backend.tail_metadata()?;
-            let mut seq = tail.next_seq;
             let mut prev_digest = tail.prev_digest;
             let mut events = Vec::with_capacity(operations.len());
             let mut state_writes = 0usize;
             let mut state_deletes = 0usize;
 
-            for op in operations {
+            for (seq, op) in (tail.next_seq..).zip(operations) {
                 let event = match op {
                     BatchOperation::Apply { key, value, tick } => {
                         state_writes += 1;
@@ -299,7 +298,6 @@ fn run() -> Result<(), CliError> {
                     }
                 };
                 prev_digest = event.digest.clone();
-                seq += 1;
                 events.push(event);
             }
 

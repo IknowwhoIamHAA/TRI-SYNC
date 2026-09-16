@@ -64,6 +64,12 @@ tri-sync delete \
   --key job-status \
   --tick 2
 
+# Append many operations in one process (JSONL file or stdin)
+tri-sync apply-batch \
+  --log events.jsonl \
+  --namespace tenant-a \
+  --input ops.jsonl
+
 # Verify the log and print the final root digest
 tri-sync verify --log events.jsonl
 
@@ -101,7 +107,7 @@ Protocol violations are emitted to `stderr` as JSON with distinct exit codes:
 
 | Exit code | Category | Examples |
 |---|---|---|
-| `4` | Sequence / digest / format | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat` |
+| `4` | Sequence / digest / input validation | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat`, `InvalidNamespace` |
 | `5` | Namespace isolation | `NamespaceBreach` |
 | `6` | Checkpoint / replayed state | `StateMismatch`, `MissingTickSeal` |
 
@@ -217,6 +223,10 @@ impl EventLogBackend for CustomBackend {
 ```
 
 Batch ingestion is available through `append_batch(&[Event])`. For the filesystem backend, TRI-SYNC holds the lock once, streams all batch events, flushes segment lines, and then persists catalog metadata at the end of the batch.
+
+`tri-sync apply-batch` accepts newline-delimited JSON operations from `--input <file>` or stdin. Supported operations are:
+- `{"op":"apply","key":"<key>","value":"<value>","tick":<u64>}`
+- `{"op":"delete","key":"<key>","tick":<u64>}`
 
 Checkpoint verification persists trusted `TICK_SEAL` snapshots at append time in `<log>.snapshots/`. During `verify --checkpoint-root <digest>`, TRI-SYNC attempts to load the cached snapshot first and falls back to replaying from genesis through the checkpoint when no cache is available.
 
