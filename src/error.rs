@@ -96,7 +96,7 @@ impl ProtocolViolationError {
             Self::CompactMismatch { .. } => "COMPACT_MISMATCH",
             Self::ProtocolErrorEvent { .. } => "PROTOCOL_ERROR_EVENT",
             Self::InvalidEventFormat { detail, .. } => {
-                if detail.contains("INVALID_NAMESPACE") {
+                if detail.starts_with("INVALID_NAMESPACE:") {
                     "INVALID_NAMESPACE"
                 } else {
                     "INVALID_EVENT_FORMAT"
@@ -144,7 +144,7 @@ impl ProtocolViolationError {
         let detail = detail.into();
         Self::InvalidEventFormat {
             seq,
-            detail: if detail.contains("INVALID_NAMESPACE") {
+            detail: if detail.starts_with("INVALID_NAMESPACE:") {
                 detail
             } else {
                 format!("INVALID_NAMESPACE: {detail}")
@@ -260,7 +260,7 @@ impl ProtocolViolationError {
             return Self::namespace_breach(None, None, None, message);
         }
 
-        if message.contains("INVALID_NAMESPACE") {
+        if message.starts_with("INVALID_NAMESPACE:") {
             return Self::invalid_namespace(parse_seq(&message), None, message);
         }
 
