@@ -952,7 +952,7 @@ mod tests {
     use crate::event::{Event, ZERO_DIGEST_HEX};
     use crate::state_map::{BinaryStateMap, BsmValue, StateSnapshot};
 
-    use super::AppendOnlyEventLog;
+    use super::{AppendOnlyEventLog, decode_array_32};
 
     #[test]
     fn enforces_append_only_sequence_and_chain() {

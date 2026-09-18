@@ -82,6 +82,7 @@ pub fn validate_key(namespace: &str, key: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[allow(deprecated)]
     use super::{validate_key, validate_namespace, validate_runtime_namespace};
 
     #[test]
@@ -102,6 +103,7 @@ mod tests {
         assert!(validate_namespace("trisync-system").is_err());
     }
 
+    #[allow(deprecated)]
     #[test]
     fn validate_runtime_namespace_retains_reserved_compatibility() {
         assert!(validate_runtime_namespace("trisync-system").is_ok());

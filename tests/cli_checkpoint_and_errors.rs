@@ -26,14 +26,15 @@ fn only_segment_path(log_path: &Path) -> PathBuf {
         .path()
 }
 
-fn rewrite_tick_seal(log_path: &Path, mutate: impl FnOnce(&mut Event)) {
+fn rewrite_tick_seal(log_path: &Path, mutate: impl FnMut(&mut Event)) {
     let segment_path = only_segment_path(log_path);
+    let mut mutate = mutate;
     let mut rewritten = Vec::new();
     for line in fs::read_to_string(&segment_path)
         .expect("segment contents")
         .lines()
     {
-        if line.starts_with("#segment ") || line.trim().is_empty() {
+        if line.starts_with("#SEGMENT ") || line.trim().is_empty() {
             rewritten.push(line.to_string());
             continue;
         }
