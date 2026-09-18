@@ -99,7 +99,7 @@ impl FileSystemBackend {
 
 impl EventLogBackend for FileSystemBackend {
     fn append(&self, event: &Event) -> Result<(), ProtocolViolationError> {
-        self.inner.append(event)
+        self.inner.append_protocol(event)
     }
 
     fn append_batch(&self, events: &[Event]) -> Result<(), ProtocolViolationError> {

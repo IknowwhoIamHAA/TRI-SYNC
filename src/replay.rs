@@ -505,7 +505,9 @@ pub fn verify_events_with_snapshot(
         let checkpoint_index = matches[0];
         let checkpoint_event = &events[checkpoint_index];
         let snapshot = if let Some(snapshot) = cached_snapshot {
-            if snapshot_matches_checkpoint(&snapshot, checkpoint_event, root) {
+            if checkpoint_event.validate_digest().is_ok()
+                && snapshot_matches_checkpoint(&snapshot, checkpoint_event, root)
+            {
                 snapshot
             } else {
                 rebuild_snapshot(events, checkpoint_index, checkpoint_event, root)?
@@ -563,10 +565,14 @@ fn snapshot_matches_checkpoint(
     checkpoint_event: &Event,
     root: &str,
 ) -> bool {
+    let Some(timestamp_ms) = checkpoint_event.timestamp_ms else {
+        return false;
+    };
+
     snapshot.namespace == checkpoint_event.namespace
         && snapshot.tick == checkpoint_event.tick
         && snapshot.seal_seq == checkpoint_event.seq
-        && snapshot.seal_timestamp_ms == checkpoint_event.timestamp_ms.unwrap_or_default()
+        && snapshot.seal_timestamp_ms == timestamp_ms
         && encode_hex(&snapshot.root_digest) == root
         && encode_hex(&snapshot.seal_digest) == checkpoint_event.digest
 }

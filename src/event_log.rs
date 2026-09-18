@@ -156,7 +156,12 @@ impl AppendOnlyEventLog {
         &self.path
     }
 
-    pub fn append(&self, event: &Event) -> Result<(), ProtocolViolationError> {
+    pub fn append(&self, event: &Event) -> Result<(), Box<dyn Error>> {
+        self.append_protocol(event)
+            .map_err(|err| Box::new(err) as Box<dyn Error>)
+    }
+
+    pub fn append_protocol(&self, event: &Event) -> Result<(), ProtocolViolationError> {
         self.append_batch(std::slice::from_ref(event))
     }
 
@@ -268,6 +273,12 @@ impl AppendOnlyEventLog {
         &self,
         checkpoint_root: &str,
     ) -> Result<Option<StateSnapshot>, Box<dyn Error>> {
+        decode_array_32(checkpoint_root).map_err(|err| {
+            Box::new(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("INVALID_CHECKPOINT_ROOT: {err}"),
+            )) as Box<dyn Error>
+        })?;
         let path = self.snapshot_path_for_root(checkpoint_root);
         if !path.exists() {
             return Ok(None);
@@ -931,15 +942,17 @@ fn decode_array_32(value: &str) -> Result<[u8; 32], String> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use serde_json::Value;
+    use tempfile::tempdir;
 
     use crate::event::{Event, ZERO_DIGEST_HEX};
-    use crate::state_map::{BinaryStateMap, BsmValue};
+    use crate::state_map::{BinaryStateMap, BsmValue, StateSnapshot};
 
-    use super::AppendOnlyEventLog;
+    use super::{AppendOnlyEventLog, decode_array_32};
 
     #[test]
     fn enforces_append_only_sequence_and_chain() {
@@ -984,6 +997,31 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("lock"));
         let _ = fs::remove_file(PathBuf::from(format!("{}.catalog.json", path.display())));
+    }
+
+    #[test]
+    fn append_retains_boxed_error_signature() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("current time should be later than epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tri-sync-append-signature-{unique}.jsonl"));
+        let log = AppendOnlyEventLog::open(&path);
+
+        let first = Event::state_write(
+            0,
+            0,
+            "tenant-a",
+            "tenant-a:key",
+            BsmValue::Integer(1),
+            false,
+            ZERO_DIGEST_HEX,
+            None,
+        )
+        .expect("event create");
+
+        let result: Result<(), Box<dyn std::error::Error>> = log.append(&first);
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -1083,6 +1121,41 @@ mod tests {
         assert_eq!(snapshot.seal_seq, 1);
         assert_eq!(snapshot.tick, 1);
         assert_eq!(snapshot.namespace, "tenant-a");
+    }
+
+    #[test]
+    fn load_snapshot_for_root_rejects_path_traversal_roots() {
+        let temp = tempdir().expect("tempdir");
+        let nested = temp.path().join("nested");
+        fs::create_dir_all(&nested).expect("nested dir");
+        let path = nested.join("events.jsonl");
+        let log = AppendOnlyEventLog::open(&path);
+
+        let mut state = BinaryStateMap::new();
+        state
+            .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+            .expect("set");
+        let root_digest = state.root_digest_hex().expect("root digest");
+        let snapshot = StateSnapshot {
+            namespace: "tenant-a".to_string(),
+            tick: 1,
+            seal_seq: 1,
+            seal_timestamp_ms: 1_000,
+            root_digest: decode_array_32(&root_digest).expect("root bytes"),
+            seal_digest: [7u8; 32],
+            state,
+        };
+        let escaped_snapshot = snapshot.to_binary().expect("snapshot bytes");
+        let escaped_path = temp.path().join("escaped.snapshot.bin");
+        fs::write(&escaped_path, escaped_snapshot).expect("write escaped snapshot");
+
+        let err = log
+            .load_snapshot_for_root("../../escaped")
+            .expect_err("path traversal root must fail");
+        let io_err = err
+            .downcast_ref::<io::Error>()
+            .expect("should surface as io error");
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

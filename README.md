@@ -3,8 +3,9 @@
 
 TRI‑SYNC is the definitive standalone Rust runtime for reproducible state, immutable provenance, tamper-evident SHA-256 digest logs, and independent audit verification. It is self-contained, offline-first, and runs with zero server requirements.
 
-> **v1.3.0 — Protocol frozen. Production-ready.**  
+> **v1.3.2 — Protocol frozen. Production-ready.**  
 > The wire format is stable. Any two conforming implementations produce byte-for-byte identical state.
+> v1.3.2 restores Rust API compatibility and checkpoint-verification hardening after regressions shipped in v1.3.1.
 >
 > **Release status:** This is the authoritative zero-infrastructure production release of TRI-SYNC. Pre-1.0 experimental and serverless iterations are retired and should not be used for new deployments.
 
@@ -107,7 +108,7 @@ Protocol violations are emitted to `stderr` as JSON with distinct exit codes:
 
 | Exit code | Category | Examples |
 |---|---|---|
-| `4` | Sequence / digest / input validation | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat`, `InvalidNamespace` |
+| `4` | Sequence / digest / input validation | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat` (`INVALID_NAMESPACE` uses the same variant/code path) |
 | `5` | Namespace isolation | `NamespaceBreach` |
 | `6` | Checkpoint / replayed state | `StateMismatch`, `MissingTickSeal` |
 
@@ -178,7 +179,7 @@ TRI-SYNC is also usable as a Rust library for embedding deterministic state into
 ```toml
 # Cargo.toml
 [dependencies]
-tri-sync = { git = "https://github.com/IknowwhoIamHAA/TRI-SYNC", tag = "v1.3.0" }
+tri-sync = { git = "https://github.com/IknowwhoIamHAA/TRI-SYNC", tag = "v1.3.2" }
 ```
 
 ```rust
@@ -228,7 +229,7 @@ Batch ingestion is available through `append_batch(&[Event])`. For the filesyste
 - `{"op":"apply","key":"<key>","value":"<value>","tick":<u64>}`
 - `{"op":"delete","key":"<key>","tick":<u64>}`
 
-Checkpoint verification persists trusted `TICK_SEAL` snapshots at append time in `<log>.snapshots/`. During `verify --checkpoint-root <digest>`, TRI-SYNC attempts to load the cached snapshot first and falls back to replaying from genesis through the checkpoint when no cache is available.
+Checkpoint verification persists trusted `TICK_SEAL` snapshots at append time in `<log>.snapshots/`. During `verify --checkpoint-root <digest>`, TRI-SYNC first validates that `checkpoint_root` is a 32-byte hex digest, attempts to load a matching cached snapshot, and still revalidates the matching checkpoint event before reusing cached state. If no trustworthy cache is available, it falls back to replaying from genesis through the checkpoint.
 
 ---
 
@@ -245,7 +246,7 @@ Checkpoint verification persists trusted `TICK_SEAL` snapshots at append time in
 | **File locking** | Concurrent appends are safe via OS-level exclusive locks |
 | **Transactional writes** | `TransactionalStateMap` for atomic multi-key batch mutations |
 | **Offline licensing** | Enterprise capabilities are unlocked locally with Ed25519-signed JSON licenses |
-| **Protocol frozen** | v1.0.0 wire format will not change; future versions are additive only |
+| **Protocol frozen** | v1.0.0 wire format will not change; any future compatibility regression is treated as a bug and fixed |
 
 ---
 
@@ -282,14 +283,14 @@ Frontier-scale AI risk tracking is a separate segment for elite labs operating u
 
 ## Project Status
 
-**v1.3.0 — Protocol frozen. Production-ready.**
+**v1.3.2 — Protocol frozen. Production-ready.**
 
 - ✅ Wire format frozen — no breaking changes after v1.0.0
 - ✅ Rust test suite expanded for checkpoint replay, backends, and CLI compliance errors
 - ✅ CodeQL: 0 security alerts
 - ✅ No TODOs or FIXMEs in protocol-critical code
 - ✅ Cross-language determinism test vector pinned: `768e154f…`
-- ✅ `verify` subcommand — replay-based audit tool, exits 1 on any protocol violation
+- ✅ `verify` subcommand — replay-based audit tool with structured non-zero protocol exit codes
 - ✅ Zero-overhead offline licensing — no cloud or serverless control plane required
 
 ---

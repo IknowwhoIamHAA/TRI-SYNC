@@ -17,6 +17,39 @@ fn snapshot_cache_path(log_path: &Path, checkpoint_root: &str) -> PathBuf {
         .join(format!("{checkpoint_root}.snapshot.bin"))
 }
 
+fn only_segment_path(log_path: &Path) -> PathBuf {
+    fs::read_dir(PathBuf::from(format!("{}.segments", log_path.display())))
+        .expect("segments dir")
+        .next()
+        .expect("segment entry")
+        .expect("dir entry")
+        .path()
+}
+
+fn rewrite_tick_seal(log_path: &Path, mutate: impl FnMut(&mut Event)) {
+    let segment_path = only_segment_path(log_path);
+    let mut mutate = mutate;
+    let mut rewritten = Vec::new();
+    for line in fs::read_to_string(&segment_path)
+        .expect("segment contents")
+        .lines()
+    {
+        if line.starts_with("#SEGMENT ") || line.trim().is_empty() {
+            rewritten.push(line.to_string());
+            continue;
+        }
+
+        let mut event: Event = serde_json::from_str(line).expect("event line");
+        if event.event_type == tri_sync::event::EventType::TickSeal {
+            mutate(&mut event);
+        }
+        let json = serde_json::to_value(&event).expect("event json");
+        rewritten.push(to_canonical_string(&json).expect("canonical event"));
+    }
+
+    fs::write(&segment_path, format!("{}\n", rewritten.join("\n"))).expect("rewrite segment");
+}
+
 #[test]
 fn verify_with_checkpoint_root_replays_only_tail() {
     let temp = tempdir().expect("tempdir");
@@ -398,13 +431,7 @@ fn verify_with_checkpoint_root_uses_persisted_snapshot_cache() {
     .expect("second");
     backend.append(&second).expect("append second");
 
-    let segments_dir = std::path::PathBuf::from(format!("{}.segments", log_path.display()));
-    let segment_path = fs::read_dir(&segments_dir)
-        .expect("segments dir")
-        .next()
-        .expect("segment entry")
-        .expect("dir entry")
-        .path();
+    let segment_path = only_segment_path(&log_path);
     let lines: Vec<String> = fs::read_to_string(&segment_path)
         .expect("segment contents")
         .lines()
@@ -431,6 +458,72 @@ fn verify_with_checkpoint_root_uses_persisted_snapshot_cache() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("checkpoint_root="));
     assert!(stdout.contains("verified_events=1"), "stdout: {stdout}");
+}
+
+#[test]
+fn verify_with_checkpoint_root_rejects_tampered_cached_checkpoint_event() {
+    let temp = tempdir().expect("tempdir");
+    let log_path = temp.path().join("events.jsonl");
+    let backend = FileSystemBackend::open(&log_path);
+
+    let first = Event::state_write(
+        0,
+        1,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(1),
+        false,
+        tri_sync::event::ZERO_DIGEST_HEX,
+        None,
+    )
+    .expect("first");
+    backend.append(&first).expect("append first");
+
+    let mut checkpoint_state = tri_sync::state_map::BinaryStateMap::new();
+    checkpoint_state
+        .set("tenant-a", "tenant-a:key", BsmValue::Integer(1))
+        .expect("set");
+    let checkpoint_root = checkpoint_state.root_digest_hex().expect("checkpoint root");
+    let seal = Event::tick_seal(
+        1,
+        1,
+        "tenant-a",
+        1,
+        checkpoint_root.clone(),
+        first.digest.clone(),
+        10,
+    )
+    .expect("seal");
+    backend.append(&seal).expect("append seal");
+
+    let second = Event::state_write(
+        2,
+        2,
+        "tenant-a",
+        "tenant-a:key",
+        BsmValue::Integer(2),
+        false,
+        seal.digest.clone(),
+        None,
+    )
+    .expect("second");
+    backend.append(&second).expect("append second");
+
+    rewrite_tick_seal(&log_path, |event| {
+        event.event_count = Some(999);
+    });
+
+    let output = Command::new(tri_sync_bin())
+        .args(["verify", "--log"])
+        .arg(&log_path)
+        .args(["--checkpoint-root", &checkpoint_root])
+        .output()
+        .expect("run checkpoint verify");
+
+    assert_eq!(output.status.code(), Some(4));
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    let json: serde_json::Value = serde_json::from_str(stderr.trim()).expect("json stderr");
+    assert_eq!(json["code"], "DIGEST_MISMATCH");
 }
 
 #[test]
