@@ -143,7 +143,7 @@ All notable changes to this project will be documented in this file.
 ## [1.0.0] - 2026-08-26 — **Protocol Frozen. Production-Ready.**
 
 > **This is the stable, commercially-licensed release of TRI-SYNC.**  
-> The v1.0.0 wire protocol is frozen. All future versions will be backward-compatible.  
+> The v1.0.0 wire protocol is frozen. Any future compatibility regression is a bug to be fixed, not a new protocol line.  
 > 100 tests pass. CodeQL: 0 alerts. No TODOs or FIXMEs in protocol-critical code.
 >
 > Pre-1.0 experimental/serverless iterations are retired and superseded by this standalone release line.

@@ -246,7 +246,7 @@ Checkpoint verification persists trusted `TICK_SEAL` snapshots at append time in
 | **File locking** | Concurrent appends are safe via OS-level exclusive locks |
 | **Transactional writes** | `TransactionalStateMap` for atomic multi-key batch mutations |
 | **Offline licensing** | Enterprise capabilities are unlocked locally with Ed25519-signed JSON licenses |
-| **Protocol frozen** | v1.0.0 wire format will not change; future versions are additive only |
+| **Protocol frozen** | v1.0.0 wire format will not change; any future compatibility regression is treated as a bug and fixed |
 
 ---
 
