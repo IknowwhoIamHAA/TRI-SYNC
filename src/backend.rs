@@ -236,18 +236,18 @@ impl EventLogBackend for InMemoryBackend {
                 .validate_digest()
                 .map_err(ProtocolViolationError::from_message)?;
 
-            if let Some(last) = guard.last()
-                && last.namespace != event.namespace
-            {
-                return Err(ProtocolViolationError::namespace_breach(
-                    Some(last.namespace.clone()),
-                    Some(event.namespace.clone()),
-                    event.key.clone(),
-                    format!(
-                        "NAMESPACE_LEAK: mixed namespaces in one log backend (expected {}, got {})",
-                        last.namespace, event.namespace
-                    ),
-                ));
+            if let Some(last) = guard.last() {
+                if last.namespace != event.namespace {
+                    return Err(ProtocolViolationError::namespace_breach(
+                        Some(last.namespace.clone()),
+                        Some(event.namespace.clone()),
+                        event.key.clone(),
+                        format!(
+                            "NAMESPACE_LEAK: mixed namespaces in one log backend (expected {}, got {})",
+                            last.namespace, event.namespace
+                        ),
+                    ));
+                }
             }
 
             guard.push(event.clone());
