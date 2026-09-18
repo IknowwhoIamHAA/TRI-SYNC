@@ -34,6 +34,9 @@
 
 - `TICK_SEAL` events: `timestamp_ms` is required; timestamps must be monotonically non-decreasing
   across seals (`TIMESTAMP_REGRESSION` is fatal)
+- `verify --checkpoint-root`: the checkpoint root must parse as a 32-byte hex
+  digest before snapshot-cache path lookup; cached snapshots are trusted only if
+  the matching `TICK_SEAL` still validates its digest and required timestamp
 - `DUPLICATE_EVENT`: a non-idempotent event whose digest has already been seen is a fatal error
   (halts replay); idempotent duplicates emit `WARN_DUPLICATE` and are skipped
 - `COMPACT` events: verify live state root matches `snapshot_digest`; loading from `archive_uri`

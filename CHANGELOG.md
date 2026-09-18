@@ -2,10 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] — v1.3.0
+## [1.3.2] - 2026-09-18 — Compatibility + Verification Fixes
 
-> **Backward-compatible additions only.** The v1.0.0 wire protocol is unchanged.  
-> All new features are opt-in. No breaking changes.
+> **Patch release.** The v1.0.0 wire protocol remains unchanged.  
+> This release restores accidental Rust API breakage shipped in v1.3.1 and fixes
+> checkpoint-verification trust regressions introduced there.
+
+### Fixed
+- Cached `verify --checkpoint-root` validation now revalidates the matching
+  `TICK_SEAL` digest and required timestamp before trusting a persisted
+  `StateSnapshot`, so tampered checkpoint events cannot reuse cached trust.
+- `checkpoint_root` is now validated as a 32-byte hex digest before snapshot-path
+  construction, blocking path traversal outside `<log>.snapshots/`.
+- `AppendOnlyEventLog::append` now again exposes its original boxed-error public
+  signature while internal typed validation continues through `append_protocol`.
+- `key::validate_runtime_namespace` is restored as a deprecated compatibility
+  wrapper for downstream callers that upgraded through v1.3.1.
+- `ProtocolViolationError` public compatibility is restored by routing
+  `INVALID_NAMESPACE` reporting through the pre-existing `InvalidEventFormat`
+  variant instead of a new exhaustive-match-breaking enum variant.
+
+### Validation
+- `cargo fmt && cargo test`: `113` library tests + `2`
+  (`benchmark_regression`) + `13` (`cli_checkpoint_and_errors`) + `1`
+  doc-test passed.
+- CodeQL / review validation on this branch: no CodeQL alerts after the final fix.
+
+---
+
+## [1.3.1] - 2026-09-16 — Production packaging update
+> **Affected release note:** v1.3.1 preserved the v1.0.0 wire protocol, but it
+> also shipped two undocumented Rust API breaking changes (`append` return type
+> and removal of `validate_runtime_namespace`) plus checkpoint-verification
+> regressions fixed in v1.3.2.
 >  
 > **Repository status:** This line is the definitive standalone production track. Earlier pre-1.0 experimental/serverless iterations are retired.
 
@@ -16,7 +45,7 @@ All notable changes to this project will be documented in this file.
   `InMemoryBackend` reference implementations.
 - Trusted-checkpoint verification with `tri-sync verify --checkpoint-root <digest>`,
   now loading persisted `StateSnapshot` cache entries (with replay-through-checkpoint
-  fallback when cache is absent, stale, or unreadable/corrupt.
+  fallback when cache is absent, stale, or unreadable/corrupt).
 - `ProtocolViolationError` structured JSON error taxonomy with compliance-oriented
   exit codes for sequence/digest/format failures, namespace breaches, and
   checkpoint/state mismatches.
@@ -95,22 +124,12 @@ All notable changes to this project will be documented in this file.
 - Various clippy auto-fixes: `needless_as_bytes`, `collapsible_if`.
 
 ### Fixed
-- Checkpoint-cache verification now revalidates the matching `TICK_SEAL` digest and
-  required timestamp before trusting a persisted snapshot, so tampered checkpoint
-  events cannot bypass digest verification.
-- Snapshot-cache loading now validates `--checkpoint-root` / API checkpoint roots as
-  32-byte hex digests before constructing snapshot paths, blocking path traversal
-  outside `<log>.snapshots/`.
-- Restored Rust API compatibility by keeping `AppendOnlyEventLog::append` on its
-  original boxed-error signature, restoring `key::validate_runtime_namespace`, and
-  routing `INVALID_NAMESPACE` back through the pre-existing `InvalidEventFormat`
-  `ProtocolViolationError` variant.
 - `README.md` + `docs/licensing.md`: corrected license key format from
   `TRISYNC-XXXX-XXXX-XXXX` to `TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX` (5 occurrences).
 - `protocol.md`: replaced stale physics schema stub with the actual event schema.
 
 ### Compatibility
-- Wire format: **unchanged**. All v1.0.0 encoded logs are fully replayable by v1.1.0.
+- Wire format: **unchanged**. All v1.0.0 encoded logs are fully replayable by v1.3.1.
 - `BinaryStateMap::from_binary` / `to_binary`: byte-identical to v1.0.0.
 - All existing CLI subcommands (`apply`, `delete`, `replay`, `verify`, `export`, `digest`,
   `example`) are unchanged; `apply-batch` is additive.
