@@ -107,7 +107,7 @@ Protocol violations are emitted to `stderr` as JSON with distinct exit codes:
 
 | Exit code | Category | Examples |
 |---|---|---|
-| `4` | Sequence / digest / input validation | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat`, `InvalidNamespace` |
+| `4` | Sequence / digest / input validation | `SequenceGap`, `DigestMismatch`, `InvalidEventFormat` (`INVALID_NAMESPACE` uses the same variant/code path) |
 | `5` | Namespace isolation | `NamespaceBreach` |
 | `6` | Checkpoint / replayed state | `StateMismatch`, `MissingTickSeal` |
 

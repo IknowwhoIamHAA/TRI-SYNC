@@ -17,6 +17,18 @@ impl TenantKey {
 }
 
 pub fn validate_namespace(namespace: &str) -> Result<(), String> {
+    validate_namespace_with_options(namespace, false)
+}
+
+#[deprecated(note = "use validate_namespace for tenant namespaces")]
+pub fn validate_runtime_namespace(namespace: &str) -> Result<(), String> {
+    validate_namespace_with_options(namespace, true)
+}
+
+fn validate_namespace_with_options(
+    namespace: &str,
+    allow_reserved_system_namespace: bool,
+) -> Result<(), String> {
     let bytes = namespace.as_bytes();
     if !(3..=63).contains(&bytes.len()) {
         return Err("INVALID_NAMESPACE: namespace must be 3-63 bytes".to_string());
@@ -33,7 +45,7 @@ pub fn validate_namespace(namespace: &str) -> Result<(), String> {
         }
     }
 
-    if namespace == RESERVED_SYSTEM_NAMESPACE {
+    if !allow_reserved_system_namespace && namespace == RESERVED_SYSTEM_NAMESPACE {
         return Err(format!(
             "INVALID_NAMESPACE: namespace '{RESERVED_SYSTEM_NAMESPACE}' is reserved and may not be used by tenants"
         ));
@@ -70,7 +82,7 @@ pub fn validate_key(namespace: &str, key: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_key, validate_namespace};
+    use super::{validate_key, validate_namespace, validate_runtime_namespace};
 
     #[test]
     fn validates_namespace_pattern() {
@@ -88,5 +100,10 @@ mod tests {
     #[test]
     fn rejects_reserved_system_namespace() {
         assert!(validate_namespace("trisync-system").is_err());
+    }
+
+    #[test]
+    fn validate_runtime_namespace_retains_reserved_compatibility() {
+        assert!(validate_runtime_namespace("trisync-system").is_ok());
     }
 }

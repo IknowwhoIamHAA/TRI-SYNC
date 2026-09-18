@@ -95,6 +95,16 @@ All notable changes to this project will be documented in this file.
 - Various clippy auto-fixes: `needless_as_bytes`, `collapsible_if`.
 
 ### Fixed
+- Checkpoint-cache verification now revalidates the matching `TICK_SEAL` digest and
+  required timestamp before trusting a persisted snapshot, so tampered checkpoint
+  events cannot bypass digest verification.
+- Snapshot-cache loading now validates `--checkpoint-root` / API checkpoint roots as
+  32-byte hex digests before constructing snapshot paths, blocking path traversal
+  outside `<log>.snapshots/`.
+- Restored Rust API compatibility by keeping `AppendOnlyEventLog::append` on its
+  original boxed-error signature, restoring `key::validate_runtime_namespace`, and
+  routing `INVALID_NAMESPACE` back through the pre-existing `InvalidEventFormat`
+  `ProtocolViolationError` variant.
 - `README.md` + `docs/licensing.md`: corrected license key format from
   `TRISYNC-XXXX-XXXX-XXXX` to `TRI-XXXXXXXX-XXXXXXXX-XXXXXXXX` (5 occurrences).
 - `protocol.md`: replaced stale physics schema stub with the actual event schema.

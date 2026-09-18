@@ -79,11 +79,6 @@ pub enum ProtocolViolationError {
         seq: Option<u64>,
         detail: String,
     },
-    InvalidNamespace {
-        seq: Option<u64>,
-        namespace: Option<String>,
-        detail: String,
-    },
 }
 
 impl ProtocolViolationError {
@@ -100,8 +95,13 @@ impl ProtocolViolationError {
             Self::TickRegression { .. } => "TICK_REGRESSION",
             Self::CompactMismatch { .. } => "COMPACT_MISMATCH",
             Self::ProtocolErrorEvent { .. } => "PROTOCOL_ERROR_EVENT",
-            Self::InvalidEventFormat { .. } => "INVALID_EVENT_FORMAT",
-            Self::InvalidNamespace { .. } => "INVALID_NAMESPACE",
+            Self::InvalidEventFormat { detail, .. } => {
+                if detail.contains("INVALID_NAMESPACE") {
+                    "INVALID_NAMESPACE"
+                } else {
+                    "INVALID_EVENT_FORMAT"
+                }
+            }
         }
     }
 
@@ -111,8 +111,7 @@ impl ProtocolViolationError {
             | Self::DigestMismatch { .. }
             | Self::InvalidEventFormat { .. }
             | Self::DuplicateEvent { .. }
-            | Self::ProtocolErrorEvent { .. }
-            | Self::InvalidNamespace { .. } => 4,
+            | Self::ProtocolErrorEvent { .. } => 4,
             Self::SequenceCollision { .. } => 5,
             Self::NamespaceBreach { .. } => 5,
             Self::StateMismatch { .. }
@@ -139,13 +138,17 @@ impl ProtocolViolationError {
 
     pub fn invalid_namespace(
         seq: Option<u64>,
-        namespace: Option<String>,
+        _namespace: Option<String>,
         detail: impl Into<String>,
     ) -> Self {
-        Self::InvalidNamespace {
+        let detail = detail.into();
+        Self::InvalidEventFormat {
             seq,
-            namespace,
-            detail: detail.into(),
+            detail: if detail.contains("INVALID_NAMESPACE") {
+                detail
+            } else {
+                format!("INVALID_NAMESPACE: {detail}")
+            },
         }
     }
 
@@ -371,7 +374,6 @@ impl Display for ProtocolViolationError {
                 )
             }
             Self::InvalidEventFormat { detail, .. } => f.write_str(detail),
-            Self::InvalidNamespace { detail, .. } => f.write_str(detail),
         }
     }
 }
