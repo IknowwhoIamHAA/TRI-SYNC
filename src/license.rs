@@ -327,13 +327,13 @@ fn parse_license_document(
         });
     }
 
-    if let Some(expires_at) = parsed.expires_at
-        && expires_at < parsed.issued_at
-    {
-        return Err(LicenseError::InvalidLicenseKey {
-            feature,
-            detail: format!("The TRI-SYNC license from {source} expires before it is issued."),
-        });
+    if let Some(expires_at) = parsed.expires_at {
+        if expires_at < parsed.issued_at {
+            return Err(LicenseError::InvalidLicenseKey {
+                feature,
+                detail: format!("The TRI-SYNC license from {source} expires before it is issued."),
+            });
+        }
     }
 
     Ok(parsed)

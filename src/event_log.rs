@@ -439,10 +439,10 @@ impl AppendOnlyEventLog {
             catalog.head_digest = event.digest.clone();
             catalog_dirty = true;
 
-            if event.event_type == EventType::TickSeal
-                && let Some(root) = event.root_digest.as_deref()
-            {
-                sealed_roots.push(root.to_string());
+            if event.event_type == EventType::TickSeal {
+                if let Some(root) = event.root_digest.as_deref() {
+                    sealed_roots.push(root.to_string());
+                }
             }
         }
 
