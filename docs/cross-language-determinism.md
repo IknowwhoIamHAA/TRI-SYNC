@@ -200,8 +200,8 @@ All conforming implementations **MUST** enforce these guards during replay:
 | `DIGEST_MISMATCH` | Recomputed event digest ≠ stored digest | Fatal halt |
 | `SEQ_GAP` | Non-consecutive sequence number | Fatal halt |
 | `INVALID_EVENT_FORMAT` / `INVALID_NAMESPACE` | Required event fields are missing or malformed; namespace validation failures surface as `INVALID_NAMESPACE` | Fatal halt |
-| `STATE_MISMATCH` | State evolution, deletes, or `TICK_SEAL` root verification do not match the replayed log | Fatal halt |
-| `MISSING_TICK_SEAL` | `verify --checkpoint-root` finds no matching `TICK_SEAL` for the requested root digest | Fatal halt |
+| `STATE_MISMATCH` | `TICK_SEAL` root digest does not match live state, or other state evolution/delete/checkpoint continuity checks fail | Fatal halt |
+| `MISSING_TICK_SEAL` | No `TICK_SEAL` is found at the requested checkpoint boundary (`verify --checkpoint-root`) | Fatal halt |
 | `NAMESPACE_BREACH` | Replay crosses namespace boundaries or mixes namespaces in one replay stream | Fatal halt |
 | `DUPLICATE_EVENT` | Non-idempotent event with already-seen digest | Fatal halt |
 | `TIMESTAMP_REGRESSION` | `TICK_SEAL.timestamp_ms` < previous seal's timestamp | Fatal halt |
