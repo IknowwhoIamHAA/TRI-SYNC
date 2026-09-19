@@ -213,7 +213,27 @@ All conforming implementations **MUST** enforce these guards during replay:
 
 ---
 
-## 7. File Locking (for implementations that write to disk)
+## 7. Snapshot & Wire-Format Integrity Errors
+
+Snapshot-cache loading and Binary State Map decoding are a distinct layer from the §6
+replay guards above. In the reference implementation, disk-loaded snapshot decode
+errors flow through `AppendOnlyEventLog::load_snapshot_for_root()`, which wraps
+`StateSnapshot::from_binary()` failures as `io::Error(InvalidData)`, and then through
+`FileSystemBackend::load_snapshot_for_root()`, which normalizes the resulting message
+with `ProtocolViolationError::from_message()`.
+
+| Raw lower-level error string | Produced by | Surfaced runtime code |
+|---|---|---|
+| `TICK_SEAL_FAIL` | `StateSnapshot::from_binary()` when the snapshot root digest does not match the decoded state | `STATE_MISMATCH` |
+| `NAMESPACE_LEAK` | `StateSnapshot::from_binary()` when a decoded key falls outside the snapshot namespace | `NAMESPACE_BREACH` |
+| `ORDER_VIOLATION` | `BinaryStateMap::from_binary()` when decoded keys are out of byte-lexicographic order or duplicated | `INVALID_EVENT_FORMAT` |
+
+These errors are still useful cross-language conformance checks for snapshot and wire
+format handling, but they are not direct replay-guard codes from `ReplayEngine`.
+
+---
+
+## 8. File Locking (for implementations that write to disk)
 
 When appending to an event log file, implementations **MUST** acquire an
 OS-level exclusive advisory lock before any read-validate-write operation.
@@ -225,7 +245,7 @@ via write-to-`.tmp` + `rename` (POSIX atomic on the same filesystem).
 
 ---
 
-## 8. Conformance Checklist
+## 9. Conformance Checklist
 
 A cross-language implementation is conformant when it passes all of the following:
 
