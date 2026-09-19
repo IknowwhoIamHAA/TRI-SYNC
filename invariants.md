@@ -54,8 +54,8 @@
   the matching `TICK_SEAL` still validates its digest and required timestamp
 - `DUPLICATE_EVENT`: a non-idempotent event whose digest has already been seen is a fatal error
   (halts replay); idempotent duplicates emit `WARN_DUPLICATE` and are skipped
-- `COMPACT` events: replay verifies that live state root matches `snapshot_digest`; `archive_uri`
-  is recorded on the event but replay/verify do not load from it
+- `COMPACT_MISMATCH`: replay halts when a `COMPACT` event's live state root does not match its
+  `snapshot_digest`; `archive_uri` is recorded on the event but replay/verify do not load from it
 - `PROTOCOL_ERROR` is the event type recorded in the log; encountering it halts replay with error
   code `PROTOCOL_ERROR_EVENT`
 - All tenants: isolated by namespace-prefixed keys; cross-namespace replay is fatal with
