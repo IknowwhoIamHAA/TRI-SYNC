@@ -199,16 +199,24 @@ All conforming implementations **MUST** enforce these guards during replay:
 |---|---|---|
 | `DIGEST_MISMATCH` | Recomputed event digest ≠ stored digest | Fatal halt |
 | `SEQ_GAP` | Non-consecutive sequence number | Fatal halt |
-| `TICK_SEAL_FAIL` | Root digest mismatch at tick boundary | Fatal halt |
-| `NAMESPACE_LEAK` | Event targets a foreign namespace | Fatal halt |
-| `TYPE_MISMATCH` | Value type change on existing key | Fatal halt |
-| `ORDER_VIOLATION` | BSM keys out of byte-lexicographic order | Fatal halt |
+| `INVALID_EVENT_FORMAT` / `INVALID_NAMESPACE` | Required event fields are missing or malformed; namespace validation failures surface as `INVALID_NAMESPACE` | Fatal halt |
+| `STATE_MISMATCH` | State evolution, deletes, or `TICK_SEAL` root verification do not match the replayed log | Fatal halt |
+| `MISSING_TICK_SEAL` | `verify --checkpoint-root` finds no matching `TICK_SEAL` for the requested root digest | Fatal halt |
+| `NAMESPACE_BREACH` | Replay crosses namespace boundaries or mixes namespaces in one replay stream | Fatal halt |
 | `DUPLICATE_EVENT` | Non-idempotent event with already-seen digest | Fatal halt |
 | `TIMESTAMP_REGRESSION` | `TICK_SEAL.timestamp_ms` < previous seal's timestamp | Fatal halt |
-| `COMPACT_FAIL` | `COMPACT.snapshot_digest` ≠ live state root | Fatal halt |
+| `TICK_REGRESSION` | Event `tick` moves backward relative to the prior maximum tick | Fatal halt |
+| `COMPACT_MISMATCH` | `COMPACT.snapshot_digest` ≠ live state root | Fatal halt |
+| `PROTOCOL_ERROR_EVENT` | Replay encounters a logged `PROTOCOL_ERROR` event | Fatal halt |
 
 Idempotent duplicate events (where `event.idempotent == true` and the digest was
 already seen) emit `WARN_DUPLICATE` and are **skipped** (not halted).
+
+`TYPE_MISMATCH` and `ORDER_VIOLATION` are still real lower-level validation errors,
+but they are not top-level replay guard codes in Rust's `ProtocolViolationError::code()`.
+During replay, value-type invariant failures are surfaced as `STATE_MISMATCH`, while
+`ORDER_VIOLATION` applies to Binary State Map wire-format validation (§3), not the
+replay guard table above.
 
 ---
 
