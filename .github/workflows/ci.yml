@@ -1,246 +1,98 @@
-#[derive(Debug, Clone)]
-pub enum ProtocolViolationError {
-    SequenceGap {
-        expected: u64,
-        found: u64,
-        namespace: String,
-        tick: u64,
-    },
-    DigestMismatch {
-        expected: String,
-        found: String,
-        namespace: String,
-        seq: u64,
-        tick: u64,
-    },
-    NamespaceBreach {
-        expected: String,
-        found: String,
-        seq: u64,
-        tick: u64,
-    },
-    MissingTickSeal {
-        root_digest: String,
-        namespace: String,
-        seq: u64,
-        tick: u64,
-    },
-    TimestampRegression {
-        previous: u64,
-        current: u64,
-        seq: u64,
-        namespace: String,
-        tick: u64,
-    },
-    TickRegression {
-        previous: u64,
-        current: u64,
-        seq: u64,
-        namespace: String,
-        tick: u64,
-    },
-    DuplicateEvent {
-        digest: String,
-        seq: u64,
-        namespace: String,
-        tick: u64,
-    },
-    InvalidEventFormat {
-        detail: String,
-        seq: u64,
-        namespace: String,
-        tick: u64,
-    },
-    StateMismatch {
-        expected: String,
-        found: String,
-        seq: u64,
-        namespace: String,
-        tick: u64,
-    },
-    CompactMismatch {
-        expected: String,
-        found: String,
-        seq: u64,
-        namespace: String,
-        tick: u64,
-    },
-    ProtocolErrorEvent {
-        code: String,
-        detail: Option<String>,
-        seq: u64,
-        namespace: String,
-        tick: u64,
-    },
-}
+name: CI
 
-impl ProtocolViolationError {
-    pub fn code(&self) -> &'static str {
-        match self {
-            ProtocolViolationError::SequenceGap { .. } => "SEQ_GAP",
-            ProtocolViolationError::DigestMismatch { .. } => "DIGEST_MISMATCH",
-            ProtocolViolationError::NamespaceBreach { .. } => "NAMESPACE_BREACH",
-            ProtocolViolationError::MissingTickSeal { .. } => "MISSING_TICK_SEAL",
-            ProtocolViolationError::TimestampRegression { .. } => "TIMESTAMP_REGRESSION",
-            ProtocolViolationError::TickRegression { .. } => "TICK_REGRESSION",
-            ProtocolViolationError::DuplicateEvent { .. } => "DUPLICATE_EVENT",
-            ProtocolViolationError::InvalidEventFormat { .. } => "INVALID_EVENT_FORMAT",
-            ProtocolViolationError::StateMismatch { .. } => "STATE_MISMATCH",
-            ProtocolViolationError::CompactMismatch { .. } => "COMPACT_MISMATCH",
-            ProtocolViolationError::ProtocolErrorEvent { .. } => "PROTOCOL_ERROR_EVENT",
-        }
-    }
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
 
-    pub fn error_type(&self) -> &'static str {
-        match self {
-            ProtocolViolationError::SequenceGap { .. } => "SequenceGap",
-            ProtocolViolationError::DigestMismatch { .. } => "DigestMismatch",
-            ProtocolViolationError::NamespaceBreach { .. } => "NamespaceBreach",
-            ProtocolViolationError::MissingTickSeal { .. } => "MissingTickSeal",
-            ProtocolViolationError::TimestampRegression { .. } => "TimestampRegression",
-            ProtocolViolationError::TickRegression { .. } => "TickRegression",
-            ProtocolViolationError::DuplicateEvent { .. } => "DuplicateEvent",
-            ProtocolViolationError::InvalidEventFormat { .. } => "InvalidEventFormat",
-            ProtocolViolationError::StateMismatch { .. } => "StateMismatch",
-            ProtocolViolationError::CompactMismatch { .. } => "CompactMismatch",
-            ProtocolViolationError::ProtocolErrorEvent { .. } => "ProtocolErrorEvent",
-        }
-    }
+permissions:
+  contents: read
 
-    pub fn exit_code(&self) -> i32 {
-        match self {
-            // 4: sequence / digest / format
-            ProtocolViolationError::SequenceGap { .. }
-            | ProtocolViolationError::DigestMismatch { .. }
-            | ProtocolViolationError::InvalidEventFormat { .. }
-            | ProtocolViolationError::DuplicateEvent { .. }
-            | ProtocolViolationError::CompactMismatch { .. }
-            | ProtocolViolationError::StateMismatch { .. } => 4,
+jobs:
+  rust-lint:
+    name: Rust lint
+    runs-on: ubuntu-latest
 
-            // 5: namespace isolation
-            ProtocolViolationError::NamespaceBreach { .. } => 5,
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-            // 6: checkpoint / state continuity
-            ProtocolViolationError::MissingTickSeal { .. }
-            | ProtocolViolationError::TimestampRegression { .. }
-            | ProtocolViolationError::TickRegression { .. } => 6,
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
+          components: rustfmt, clippy
 
-            // ProtocolErrorEvent: treat as protocol-layer halt
-            ProtocolViolationError::ProtocolErrorEvent { .. } => 4,
-        }
-    }
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
 
-    pub fn message(&self) -> String {
-        match self {
-            ProtocolViolationError::SequenceGap {
-                expected,
-                found,
-                namespace,
-                tick,
-            } => format!(
-                "SEQ_GAP: expected seq {expected}, found {found} (namespace={namespace}, tick={tick})"
-            ),
-            ProtocolViolationError::DigestMismatch {
-                expected,
-                found,
-                namespace,
-                seq,
-                tick,
-            } => format!(
-                "DIGEST_MISMATCH: expected prev_digest {expected}, found {found} (seq={seq}, namespace={namespace}, tick={tick})"
-            ),
-            ProtocolViolationError::NamespaceBreach {
-                expected,
-                found,
-                seq,
-                tick,
-            } => format!(
-                "NAMESPACE_BREACH: mixed replay namespaces (expected {expected}, got {found}) at seq {seq}, tick {tick}"
-            ),
-            ProtocolViolationError::MissingTickSeal {
-                root_digest,
-                namespace,
-                seq,
-                tick,
-            } => format!(
-                "MISSING_TICK_SEAL: no TICK_SEAL with root_digest {root_digest} (namespace={namespace}, seq={seq}, tick={tick})"
-            ),
-            ProtocolViolationError::TimestampRegression {
-                previous,
-                current,
-                seq,
-                namespace,
-                tick,
-            } => format!(
-                "TIMESTAMP_REGRESSION: TICK_SEAL at seq {seq} has timestamp {current} < previous {previous} (namespace={namespace}, tick={tick})"
-            ),
-            ProtocolViolationError::TickRegression {
-                previous,
-                current,
-                seq,
-                namespace,
-                tick,
-            } => format!(
-                "TICK_REGRESSION: event at seq {seq} has tick {current} < previous max tick {previous} (namespace={namespace}, tick={tick})"
-            ),
-            ProtocolViolationError::DuplicateEvent {
-                digest,
-                seq,
-                namespace,
-                tick,
-            } => format!(
-                "DUPLICATE_EVENT: non-idempotent duplicate detected at seq {seq} (digest={digest}, namespace={namespace}, tick={tick})"
-            ),
-            ProtocolViolationError::InvalidEventFormat {
-                detail,
-                seq,
-                namespace,
-                tick,
-            } => format!(
-                "INVALID_EVENT_FORMAT: {detail} (seq={seq}, namespace={namespace}, tick={tick})"
-            ),
-            ProtocolViolationError::StateMismatch {
-                expected,
-                found,
-                seq,
-                namespace,
-                tick,
-            } => format!(
-                "STATE_MISMATCH: expected {expected}, found {found} (seq={seq}, namespace={namespace}, tick={tick})"
-            ),
-            ProtocolViolationError::CompactMismatch {
-                expected,
-                found,
-                seq,
-                namespace,
-                tick,
-            } => format!(
-                "COMPACT_MISMATCH: current state root {found} does not match snapshot_digest {expected} at seq {seq} (namespace={namespace}, tick={tick})"
-            ),
-            ProtocolViolationError::ProtocolErrorEvent {
-                code,
-                detail,
-                seq,
-                namespace,
-                tick,
-            } => {
-                let suffix = detail.as_ref().map(|d| format!(": {d}")).unwrap_or_default();
-                format!(
-                    "PROTOCOL_ERROR_EVENT: at seq {seq}: {code}{suffix} (namespace={namespace}, tick={tick})"
-                )
-            }
-        }
-    }
+      - name: Check formatting
+        run: cargo fmt --check
 
-    pub fn to_json_value(&self) -> serde_json::Value {
-        use serde_json::json;
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
 
-        json!({
-            "code": self.code(),
-            "error_type": self.error_type(),
-            "exit_code": self.exit_code(),
-            "message": self.message(),
-        })
-    }
-}
+  rust-test:
+    name: Rust test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
 
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Run Rust tests
+        run: cargo test --locked
+
+  typescript-client:
+    name: TypeScript client (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    defaults:
+      run:
+        working-directory: clients/typescript
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: clients/typescript/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test

@@ -793,7 +793,12 @@ mod tests {
         assert_eq!(bytes.len(), 73, "wire length must be exactly 73 bytes");
 
         // Pin the exact wire hex so any encoding change is immediately visible.
-        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        use std::fmt::Write as _;
+
+        let mut hex = String::with_capacity(bytes.len() * 2);
+        for byte in &bytes {
+            write!(&mut hex, "{byte:02x}").expect("append hex");
+        }
         assert_eq!(
             hex,
             concat!(
