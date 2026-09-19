@@ -195,28 +195,21 @@ with `INVALID_NAMESPACE`.
 
 All conforming implementations **MUST** enforce these guards during replay:
 
-| Guard | Trigger | Action |
-|---|---|---|
-| `DIGEST_MISMATCH` | Recomputed event digest ≠ stored digest | Fatal halt |
-| `SEQ_GAP` | Non-consecutive sequence number | Fatal halt |
-| `INVALID_EVENT_FORMAT` / `INVALID_NAMESPACE` | Required event fields are missing or malformed; namespace validation failures surface as `INVALID_NAMESPACE` | Fatal halt |
-| `STATE_MISMATCH` | `TICK_SEAL` root digest does not match live state, or other state evolution/delete/checkpoint continuity checks fail | Fatal halt |
-| `MISSING_TICK_SEAL` | No `TICK_SEAL` is found at the requested checkpoint boundary (`verify --checkpoint-root`) | Fatal halt |
-| `NAMESPACE_BREACH` | Replay crosses namespace boundaries or mixes namespaces in one replay stream | Fatal halt |
-| `DUPLICATE_EVENT` | Non-idempotent event with already-seen digest | Fatal halt |
-| `TIMESTAMP_REGRESSION` | `TICK_SEAL.timestamp_ms` < previous seal's timestamp | Fatal halt |
-| `TICK_REGRESSION` | Event `tick` moves backward relative to the prior maximum tick | Fatal halt |
-| `COMPACT_MISMATCH` | `COMPACT.snapshot_digest` ≠ live state root | Fatal halt |
-| `PROTOCOL_ERROR_EVENT` | Replay encounters a logged `PROTOCOL_ERROR` event | Fatal halt |
-
-Idempotent duplicate events (where `event.idempotent == true` and the digest was
-already seen) emit `WARN_DUPLICATE` and are **skipped** (not halted).
-
-`TYPE_MISMATCH` and `ORDER_VIOLATION` are still real lower-level validation errors,
-but they are not top-level replay guard codes in Rust's `ProtocolViolationError::code()`.
-During replay, value-type invariant failures are surfaced as `STATE_MISMATCH`, while
-`ORDER_VIOLATION` applies to Binary State Map wire-format validation (§3), not the
-replay guard table above.
+| Code | Real trigger |
+|---|---|
+| `SEQ_GAP` | `event.seq` greater than expected (a gap) |
+| `SEQUENCE_COLLISION` | `event.seq` less than expected (already-seen/reused seq) |
+| `DIGEST_MISMATCH` | `prev_digest` doesn't chain, or event's own digest fails validation |
+| `NAMESPACE_BREACH` | event's namespace differs from the replay's established namespace |
+| `DUPLICATE_EVENT` | non-idempotent event with an already-seen digest |
+| `WARN_DUPLICATE` | (not fatal) idempotent duplicate — skipped with a warning, replay continues |
+| `TIMESTAMP_REGRESSION` | a `TICK_SEAL`'s `timestamp_ms` is less than the previous seal's |
+| `TICK_REGRESSION` | event's `tick` is less than the max tick already seen |
+| `STATE_MISMATCH` | invalid state write/delete/batch op, a `TICK_SEAL`'s root digest not matching live state, or an ambiguous `checkpoint_root` (matches >1 `TICK_SEAL`) |
+| `MISSING_TICK_SEAL` | `verify_events_with_snapshot` finds no `TICK_SEAL` matching the given `checkpoint_root` |
+| `COMPACT_MISMATCH` | a `COMPACT` event's `snapshot_digest` doesn't match the live state root — dedicated code, confirmed, not folded into `STATE_MISMATCH` |
+| `PROTOCOL_ERROR_EVENT` | the event itself is a `PROTOCOL_ERROR` type embedded in the log |
+| `INVALID_EVENT_FORMAT` / `INVALID_NAMESPACE` | malformed payload — missing key/value, bad hex, invalid namespace format |
 
 ---
 
