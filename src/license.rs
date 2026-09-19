@@ -25,7 +25,7 @@ pub const LICENSE_ENV: &str = "TRISYNC_LICENSE";
 pub const LICENSE_FILE_ENV: &str = "TRISYNC_LICENSE_FILE";
 
 /// Embedded Ed25519 public key used to verify signed TRI-SYNC licenses.
-pub const PUBLIC_KEY: &str = "acaa9e80d4fd6ffcce6a633f45e28fc91e0d9b851e44e6c72ca47b713c1ba408";
+pub const PUBLIC_KEY: &str = "a4bb28adf0e69547d801ba164518b8ddf816d1418af5105d16740294810da5c3";
 
 const DEFAULT_LICENSE_FILE_NAME: &str = "license.json";
 const PROJECT_LICENSE_FILE_NAME: &str = "trisync-license.json";
@@ -344,6 +344,32 @@ fn verify_license_document(
     source: &str,
     feature: Option<String>,
 ) -> Result<(), LicenseError> {
+    #[cfg(test)]
+    if let Some(test_verifying_key) = test_verifying_key_override() {
+        return verify_license_document_with_key(
+            document,
+            source,
+            feature,
+            &test_verifying_key,
+        );
+    }
+
+    let verifying_key = VERIFYING_KEY
+        .as_ref()
+        .map_err(|err| LicenseError::InvalidLicenseKey {
+            feature: feature.clone(),
+            detail: format!("Embedded TRI-SYNC public key is invalid: {err}"),
+        })?;
+
+    verify_license_document_with_key(document, source, feature, verifying_key)
+}
+
+fn verify_license_document_with_key(
+    document: &LicenseDocument,
+    source: &str,
+    feature: Option<String>,
+    verifying_key: &VerifyingKey,
+) -> Result<(), LicenseError> {
     let payload = serde_json::to_value(document.payload()).map_err(|err| {
         LicenseError::InvalidLicenseKey {
             feature: feature.clone(),
@@ -355,14 +381,6 @@ fn verify_license_document(
             feature: feature.clone(),
             detail: format!("Failed to canonicalize TRI-SYNC license payload from {source}: {err}"),
         })?;
-
-    let verifying_key = VERIFYING_KEY
-        .as_ref()
-        .map_err(|err| LicenseError::InvalidLicenseKey {
-            feature: feature.clone(),
-            detail: format!("Embedded TRI-SYNC public key is invalid: {err}"),
-        })?;
-
     let signature_bytes =
         decode_hex(document.signature.trim()).map_err(|err| LicenseError::InvalidLicenseKey {
             feature: feature.clone(),
@@ -490,24 +508,36 @@ fn resolve_license_file_path() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
+static TEST_VERIFYING_KEY_OVERRIDE: LazyLock<std::sync::Mutex<Option<VerifyingKey>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
+
+#[cfg(test)]
+fn test_verifying_key_override() -> Option<VerifyingKey> {
+    TEST_VERIFYING_KEY_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+#[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::io::Write;
     use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use ed25519_dalek::{Signer, SigningKey};
+    use sha2::{Digest, Sha256};
 
     use super::{
         LICENSE_ENV, LICENSE_FILE_ENV, LICENSE_SCHEMA_VERSION, LicenseDocument, LicenseError,
-        LicenseMode, check, check_detailed, current_mode, current_mode_or_community,
-        require_enterprise, require_enterprise_detailed,
+        LicenseMode, TEST_VERIFYING_KEY_OVERRIDE, check, check_detailed, current_mode,
+        current_mode_or_community, require_enterprise, require_enterprise_detailed,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-    const TEST_PRIVATE_KEY: [u8; 32] = [
-        0x3c, 0x56, 0x5b, 0xe7, 0xd1, 0xf9, 0xa6, 0x5f, 0xa8, 0x41, 0xa8, 0x12, 0x3d, 0x3d, 0x05,
-        0x49, 0xfc, 0xf6, 0x25, 0x25, 0xfe, 0x28, 0x56, 0xcf, 0xdd, 0x51, 0x93, 0xd8, 0xc3, 0x32,
-        0x8f, 0x9d,
-    ];
+    static TEST_KEY_LOCK: Mutex<()> = Mutex::new(());
+    static TEST_KEY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn with_env_locked<F: FnOnce()>(vars: &[(&str, Option<&str>)], f: F) {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -534,7 +564,30 @@ mod tests {
         }
     }
 
-    fn signed_license_json(expires_at: Option<u64>) -> String {
+    fn with_test_signing_key<F: FnOnce(&SigningKey)>(f: F) {
+        let _guard = TEST_KEY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let nonce = TEST_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let digest = Sha256::digest(format!("tri-sync-license-test-key:{nonce}:{now}").as_bytes());
+        let signing_key = SigningKey::from_bytes(&digest.into());
+        let verifying_key = signing_key.verifying_key();
+        {
+            let mut override_slot = TEST_VERIFYING_KEY_OVERRIDE
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *override_slot = Some(verifying_key);
+        }
+        f(&signing_key);
+        let mut override_slot = TEST_VERIFYING_KEY_OVERRIDE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *override_slot = None;
+    }
+
+    fn signed_license_json(signing_key: &SigningKey, expires_at: Option<u64>) -> String {
         let mut document = LicenseDocument {
             license_version: LICENSE_SCHEMA_VERSION,
             license_id: "lic_test_enterprise".to_string(),
@@ -548,11 +601,9 @@ mod tests {
             expires_at,
             signature: String::new(),
         };
-
         let payload = serde_json::to_value(document.payload()).expect("payload value");
         let canonical_payload =
             crate::canonical_json::to_canonical_string(&payload).expect("payload json");
-        let signing_key = SigningKey::from_bytes(&TEST_PRIVATE_KEY);
         let signature = signing_key.sign(canonical_payload.as_bytes());
         document.signature = crate::hex::encode_hex(&signature.to_bytes());
         serde_json::to_string(&document).expect("license json")
@@ -574,61 +625,71 @@ mod tests {
 
     #[test]
     fn accepts_valid_license_from_environment() {
-        let license = signed_license_json(Some(u64::MAX));
-        with_env_locked(
-            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
-            || {
-                check_detailed(None).expect("valid license should verify");
-                match current_mode().expect("mode") {
-                    LicenseMode::Licensed(license) => assert_eq!(license.tier, "enterprise"),
-                    LicenseMode::Community => panic!("expected licensed mode"),
-                }
-            },
-        );
+        with_test_signing_key(|signing_key| {
+            let license = signed_license_json(signing_key, Some(u64::MAX));
+            with_env_locked(
+                &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+                || {
+                    check_detailed(None).expect("valid license should verify");
+                    match current_mode().expect("mode") {
+                        LicenseMode::Licensed(license) => assert_eq!(license.tier, "enterprise"),
+                        LicenseMode::Community => panic!("expected licensed mode"),
+                    }
+                },
+            );
+        });
     }
 
     #[test]
     fn accepts_valid_license_from_file() {
-        let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
-        write!(tmp, "{}", signed_license_json(Some(u64::MAX))).expect("write license");
-        let path = tmp.path().to_str().expect("path").to_string();
+        with_test_signing_key(|signing_key| {
+            let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
+            write!(tmp, "{}", signed_license_json(signing_key, Some(u64::MAX)))
+                .expect("write license");
+            let path = tmp.path().to_str().expect("path").to_string();
 
-        with_env_locked(
-            &[(LICENSE_ENV, None), (LICENSE_FILE_ENV, Some(&path))],
-            || {
-                check().expect("valid license file must be accepted");
-            },
-        );
+            with_env_locked(
+                &[(LICENSE_ENV, None), (LICENSE_FILE_ENV, Some(&path))],
+                || {
+                    check().expect("valid license file must be accepted");
+                },
+            );
+        });
     }
 
     #[test]
     fn rejects_invalid_license_signature() {
-        let mut document: serde_json::Value =
-            serde_json::from_str(&signed_license_json(Some(u64::MAX))).expect("license json");
-        document["holder"] = serde_json::Value::String("Tampered Holder".to_string());
-        let license = serde_json::to_string(&document).expect("tampered license");
+        with_test_signing_key(|signing_key| {
+            let mut document: serde_json::Value =
+                serde_json::from_str(&signed_license_json(signing_key, Some(u64::MAX)))
+                    .expect("license json");
+            document["holder"] = serde_json::Value::String("Tampered Holder".to_string());
+            let license = serde_json::to_string(&document).expect("tampered license");
 
-        with_env_locked(
-            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
-            || {
-                let err = require_enterprise("Automated compliance reporting")
-                    .expect_err("tampered license must be rejected");
-                assert!(err.contains("signature verification failed"), "got: {err}");
-            },
-        );
+            with_env_locked(
+                &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+                || {
+                    let err = require_enterprise("Automated compliance reporting")
+                        .expect_err("tampered license must be rejected");
+                    assert!(err.contains("signature verification failed"), "got: {err}");
+                },
+            );
+        });
     }
 
     #[test]
     fn rejects_expired_license() {
-        let license = signed_license_json(Some(1_757_913_601));
-        with_env_locked(
-            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
-            || {
-                let err = require_enterprise("Commercial production execution")
-                    .expect_err("expired license must be rejected");
-                assert!(err.contains("expired"), "got: {err}");
-            },
-        );
+        with_test_signing_key(|signing_key| {
+            let license = signed_license_json(signing_key, Some(1_757_913_601));
+            with_env_locked(
+                &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+                || {
+                    let err = require_enterprise("Commercial production execution")
+                        .expect_err("expired license must be rejected");
+                    assert!(err.contains("expired"), "got: {err}");
+                },
+            );
+        });
     }
 
     #[test]
@@ -683,63 +744,69 @@ mod tests {
 
     #[test]
     fn rejects_future_issued_at_license() {
-        let mut document: LicenseDocument =
-            serde_json::from_str(&signed_license_json(Some(u64::MAX))).expect("license json");
-        document.issued_at = u64::MAX;
-        let payload = serde_json::to_value(document.payload()).expect("payload value");
-        let canonical_payload =
-            crate::canonical_json::to_canonical_string(&payload).expect("payload json");
-        let signing_key = SigningKey::from_bytes(&TEST_PRIVATE_KEY);
-        let signature = signing_key.sign(canonical_payload.as_bytes());
-        document.signature = crate::hex::encode_hex(&signature.to_bytes());
-        let license = serde_json::to_string(&document).expect("license");
+        with_test_signing_key(|signing_key| {
+            let mut document: LicenseDocument =
+                serde_json::from_str(&signed_license_json(signing_key, Some(u64::MAX)))
+                    .expect("license json");
+            document.issued_at = u64::MAX;
+            let payload = serde_json::to_value(document.payload()).expect("payload value");
+            let canonical_payload =
+                crate::canonical_json::to_canonical_string(&payload).expect("payload json");
+            let signature = signing_key.sign(canonical_payload.as_bytes());
+            document.signature = crate::hex::encode_hex(&signature.to_bytes());
+            let license = serde_json::to_string(&document).expect("license");
 
-        with_env_locked(
-            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
-            || {
-                let err = check_detailed(None).expect_err("future license must fail");
-                assert!(err.to_string().contains("future"), "got: {err}");
-            },
-        );
+            with_env_locked(
+                &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+                || {
+                    let err = check_detailed(None).expect_err("future license must fail");
+                    assert!(err.to_string().contains("future"), "got: {err}");
+                },
+            );
+        });
     }
 
     #[test]
     fn rejects_requested_feature_not_granted_by_license() {
-        let mut document: LicenseDocument =
-            serde_json::from_str(&signed_license_json(Some(u64::MAX))).expect("license json");
-        document.features = vec!["commercial-production".to_string()];
-        let payload = serde_json::to_value(document.payload()).expect("payload value");
-        let canonical_payload =
-            crate::canonical_json::to_canonical_string(&payload).expect("payload json");
-        let signing_key = SigningKey::from_bytes(&TEST_PRIVATE_KEY);
-        let signature = signing_key.sign(canonical_payload.as_bytes());
-        document.signature = crate::hex::encode_hex(&signature.to_bytes());
-        let license = serde_json::to_string(&document).expect("license");
+        with_test_signing_key(|signing_key| {
+            let mut document: LicenseDocument =
+                serde_json::from_str(&signed_license_json(signing_key, Some(u64::MAX)))
+                    .expect("license json");
+            document.features = vec!["commercial-production".to_string()];
+            let payload = serde_json::to_value(document.payload()).expect("payload value");
+            let canonical_payload =
+                crate::canonical_json::to_canonical_string(&payload).expect("payload json");
+            let signature = signing_key.sign(canonical_payload.as_bytes());
+            document.signature = crate::hex::encode_hex(&signature.to_bytes());
+            let license = serde_json::to_string(&document).expect("license");
 
-        with_env_locked(
-            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
-            || {
-                let err = require_enterprise_detailed("Automated compliance reporting")
-                    .expect_err("missing granted feature must fail");
-                assert!(err.to_string().contains("does not grant"), "got: {err}");
-            },
-        );
+            with_env_locked(
+                &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+                || {
+                    let err = require_enterprise_detailed("Automated compliance reporting")
+                        .expect_err("missing granted feature must fail");
+                    assert!(err.to_string().contains("does not grant"), "got: {err}");
+                },
+            );
+        });
     }
 
     #[test]
     fn rejects_unrecognized_requested_feature_name() {
-        let license = signed_license_json(Some(u64::MAX));
-        with_env_locked(
-            &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
-            || {
-                let err = require_enterprise_detailed("Unknown enterprise capability")
-                    .expect_err("unknown requested feature must fail closed");
-                assert!(matches!(err, LicenseError::InvalidLicenseKey { .. }));
-                assert!(
-                    err.to_string().contains("Unknown enterprise feature"),
-                    "got: {err}"
-                );
-            },
-        );
+        with_test_signing_key(|signing_key| {
+            let license = signed_license_json(signing_key, Some(u64::MAX));
+            with_env_locked(
+                &[(LICENSE_ENV, Some(&license)), (LICENSE_FILE_ENV, None)],
+                || {
+                    let err = require_enterprise_detailed("Unknown enterprise capability")
+                        .expect_err("unknown requested feature must fail closed");
+                    assert!(matches!(err, LicenseError::InvalidLicenseKey { .. }));
+                    assert!(
+                        err.to_string().contains("Unknown enterprise feature"),
+                        "got: {err}"
+                    );
+                },
+            );
+        });
     }
 }
