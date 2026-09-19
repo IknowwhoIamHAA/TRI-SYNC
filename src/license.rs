@@ -346,12 +346,7 @@ fn verify_license_document(
 ) -> Result<(), LicenseError> {
     #[cfg(test)]
     if let Some(test_verifying_key) = test_verifying_key_override() {
-        return verify_license_document_with_key(
-            document,
-            source,
-            feature,
-            &test_verifying_key,
-        );
+        return verify_license_document_with_key(document, source, feature, &test_verifying_key);
     }
 
     let verifying_key = VERIFYING_KEY
@@ -521,9 +516,9 @@ fn test_verifying_key_override() -> Option<VerifyingKey> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::io::Write;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use ed25519_dalek::{Signer, SigningKey};
